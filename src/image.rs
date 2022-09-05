@@ -16,9 +16,10 @@ impl Image {
             height,
             data: Vec::with_capacity(size),
         };
-        unsafe {
-            image.data.set_len(size);
-        }
+        image.data.resize(size, [0u8;4]);
+        // unsafe {
+        //     image.data.set_len(size);
+        // }
         image
     }
 
