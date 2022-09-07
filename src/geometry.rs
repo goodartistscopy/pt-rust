@@ -223,6 +223,15 @@ pub enum BVHNodeContent {
     Leaf { offset: u32, count: u32 }
 }
 
+// Experimented with this smaller node (32 bytes vs 36)
+// But the friendlier cache utilisation does not translate
+// into eithr faster builds nor travversals
+// #[derive(Clone, Copy)]
+// pub struct BVHNodeCompactContent {
+//     tri_or_child_offset: u32,
+//     tri_count: u32
+// }
+
 #[derive(Clone, Copy)]
 pub struct BVHNode
 {
