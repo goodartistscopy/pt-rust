@@ -13,13 +13,15 @@ pub struct Vec3 {
 #[rustfmt::skip]
 impl_op_ex!(+ |a: &Vec3, b: &Vec3| -> Vec3 { Vec3 { x: a.x + b.x, y: a.y + b.y, z: a.z * b.z } });
 #[rustfmt::skip]
-impl_op_ex_commutative!(+ |a: &Vec3, b: f32| -> Vec3 { Vec3 { x: a.x + b, y: a.y + b, z: a.z * b } });
+impl_op_ex_commutative!(+ |a: &Vec3, b: f32| -> Vec3 { Vec3 { x: a.x + b, y: a.y + b, z: a.z + b } });
 #[rustfmt::skip]
 impl_op_ex!(- |a: &Vec3, b: &Vec3| -> Vec3 { Vec3 { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z } });
 #[rustfmt::skip]
 impl_op_ex_commutative!(* |v: &Vec3, s: f32| -> Vec3 { Vec3 { x: s * v.x, y: s * v.y, z: s * v.z } });
 #[rustfmt::skip]
 impl_op_ex!(/ |v: &Vec3, s: f32| -> Vec3 { Vec3 { x: v.x / s, y: v.y / s, z: v.z / s } });
+#[rustfmt::skip]
+impl_op_ex!(/ |s: f32, v: &Vec3| -> Vec3 { Vec3 { x: s / v.x,  y: s / v.y, z: s / v.z } });
 #[rustfmt::skip]
 impl_op_ex!(| |a: &Vec3, b: &Vec3| -> f32 { a.x * b.x + a.y * b.y + a.z * b.z });
 #[rustfmt::skip]
@@ -41,6 +43,14 @@ impl Vec3 {
     pub fn length(&self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
+
+    pub fn min(&self, v: &Self) -> Self {
+        Self { x: self.x.min(v.x), y: self.y.min(v.y), z: self.z.min(v.z) }
+    }
+
+    pub fn max(&self, v: &Self) -> Self {
+        Self { x: self.x.max(v.x), y: self.y.max(v.y), z: self.z.max(v.z) }
+    }
 }
 
 #[macro_export]
@@ -52,6 +62,13 @@ macro_rules! vec3 {
             z: $z,
         }
     };
+    ( $x:expr )=> {
+        Vec3 {
+            x: $x,
+            y: $x,
+            z: $x,
+        }
+    }
 }
 
 impl Index<usize> for Vec3 {
