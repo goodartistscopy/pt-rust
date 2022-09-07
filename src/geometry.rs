@@ -217,27 +217,9 @@ impl Intersectable for AABB {
     }
 }
 
-/*
-pub struct ChildIndexes
-{
-    pub left_child: u32, 
-    pub right_child: u32 
-}
-
-pub struct PrimSpan
-{
-    pub offset: u32, 
-    pub count: u32 
-}*/
-
-// optimized ?
-// pub enum BVHodeContent {
-//     Internal { left_child: u32 /*, right_child: u32*/ },
-//     Leaf { offset: u32, count: u8 }
-// }
 #[derive(Clone, Copy)]
 pub enum BVHNodeContent {
-    Internal { left_child: u32, right_child: u32 },
+    Internal { first_child: u32 },
     Leaf { offset: u32, count: u32 }
 }
 
@@ -351,7 +333,7 @@ impl <'a> BVH<'a>
                     self.nodes.push(left_child);
                     self.nodes.push(right_child);
                     // update the leaf node to an internal one
-                    self.nodes[node_idx as usize].content = BVHNodeContent::Internal { left_child: next_idx, right_child: next_idx + 1 };
+                    self.nodes[node_idx as usize].content = BVHNodeContent::Internal { first_child: next_idx };
                     // recurse
                     self.subdivide(next_idx, depth + 1);
                     self.subdivide(next_idx+1, depth + 1);
@@ -364,9 +346,9 @@ impl <'a> BVH<'a>
     fn intersect_node(&self, node: &BVHNode, ray: &Ray) -> Option<f32> {
         if let Some(lambda) = node.bounds.intersect(ray) {
             match node.content {
-                BVHNodeContent::Internal { left_child, right_child } => {
-                    let left_hit = self.intersect_node(&self.nodes[left_child as usize], ray);
-                    let right_hit = self.intersect_node(&self.nodes[right_child as usize], ray);
+                BVHNodeContent::Internal { first_child } => {
+                    let left_hit = self.intersect_node(&self.nodes[first_child as usize], ray);
+                    let right_hit = self.intersect_node(&self.nodes[(first_child + 1) as usize], ray);
                     if let Some(left_lambda) = left_hit {
                         if let Some(right_lambda) = right_hit {
                             Some(left_lambda.min(right_lambda))
@@ -401,9 +383,9 @@ impl <'a> BVH<'a>
             if node_depth < depth {
                 match content {
                     BVHNodeContent::Leaf { offset, count } => aabbs.push(bounds),
-                    BVHNodeContent::Internal { left_child, right_child } => {
-                        curr_nodes.push_back((&self.nodes[left_child as usize], node_depth + 1));
-                        curr_nodes.push_back((&self.nodes[right_child as usize], node_depth + 1));
+                    BVHNodeContent::Internal { first_child } => {
+                        curr_nodes.push_back((&self.nodes[first_child as usize], node_depth + 1));
+                        curr_nodes.push_back((&self.nodes[(first_child + 1) as usize], node_depth + 1));
                     }
                 }
             } else if node_depth == depth {
@@ -433,10 +415,10 @@ impl fmt::Display for BVH<'_> {
                 }
                 write!(f, "{}: ", idx);
                 match node.content {
-                    BVHNodeContent::Internal { left_child, right_child } => {
-                        writeln!(f, "Internal node -> {} , {}", left_child, right_child);
-                        curr_nodes.push_back((&self.nodes[left_child as usize], left_child, depth + 1));
-                        curr_nodes.push_back((&self.nodes[right_child as usize], right_child, depth + 1));
+                    BVHNodeContent::Internal { first_child } => {
+                        writeln!(f, "Internal node -> {} , {}", first_child, first_child + 1);
+                        curr_nodes.push_back((&self.nodes[first_child as usize], first_child, depth + 1));
+                        curr_nodes.push_back((&self.nodes[(first_child + 1) as usize], first_child + 1, depth + 1));
                     },
                     BVHNodeContent::Leaf { offset, count } =>
                     {
