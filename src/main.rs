@@ -23,7 +23,7 @@ fn main() {
         y: 2.0,
         z: 3.0,
     };
-    const NUM_ITEMS: u32 = 1024;
+    const NUM_ITEMS: u32 = 10000;
 
     let mut rng = rand::thread_rng();
 
@@ -69,7 +69,7 @@ fn main() {
     use std::time::Instant;
 
     // construction benchmarking
-    const NUM_RUNS: u128 = 10;
+    const NUM_RUNS: u128 = 100;
     let mut sum_runs = 0;
     for i in 0..NUM_RUNS {
         let start = Instant::now();
@@ -80,7 +80,17 @@ fn main() {
     sum_runs /= NUM_RUNS;
     println!("BVH construciton time: {} µs", sum_runs);
 
-    let bvh = Box::new(BVH::new(&mut triangles));
+    let mut sum_runs = 0;
+    for i in 0..NUM_RUNS {
+        let start = Instant::now();
+        let bvh = Box::new(BVH2::new(&mut triangles));
+        let run_duration = Instant::now().duration_since(start);
+        sum_runs += run_duration.as_micros();
+    }
+    sum_runs /= NUM_RUNS;
+    println!("BVH construciton time: {} µs", sum_runs);
+
+    let bvh = Box::new(BVH2::new(&mut triangles));
     println!("BVH depth = {}", bvh.depth);
 
     // draw BVH bounding boxes
@@ -127,7 +137,9 @@ fn main() {
 
     image.save_ppm("test.ppm").expect("error");
 
-    use std::mem::size_of;
+    use std::mem::{size_of,align_of_val};
     println!("Node size: {}", size_of::<BVHNode>());
+    println!("Compact node size: {}", size_of::<BVHNode2>());
+    println!("Compact node size: {}", size_of::<BVHNode2>());
 }
 
