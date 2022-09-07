@@ -1,3 +1,6 @@
+use std::fmt;
+use std::collections::VecDeque;
+
 use crate::linalg::*;
 use crate::image::Image;
 
@@ -122,7 +125,7 @@ impl Intersectable for Sphere {
 }
 
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Triangle {
     pub v0: Vec3,
     pub v1: Vec3,
@@ -184,8 +187,8 @@ impl Default for AABB
 {
     fn default() -> Self {
         AABB {
-            min: vec3!(f32::MIN),
-            max: vec3!(f32::MAX)
+            min: vec3!(f32::MAX),
+            max: vec3!(f32::MIN)
         }
     }
 }
@@ -265,10 +268,10 @@ pub struct BVHNode
 pub struct BVH<'a> {
     triangles: &'a mut [Triangle], 
     triangle_ids: Vec::<usize>,
-    nodes: Vec::<BVHNode>
+    nodes: Vec::<BVHNode>,
+    pub depth: u32
 }
 
-// impl <'a> BVH<'a>
 impl <'a> BVH<'a>
 {
     const ROOT_NODE:usize = 0;
@@ -276,13 +279,13 @@ impl <'a> BVH<'a>
     pub fn new(triangles: &'a mut[Triangle]) -> Self
     {
         let num_triangles = triangles.len();
-        let mut bvh = BVH { triangles, triangle_ids: (0..num_triangles).into_iter().collect(), nodes: Vec::with_capacity(2 * num_triangles) };
+        let mut bvh = BVH { triangles, triangle_ids: (0..num_triangles).into_iter().collect(), nodes: Vec::with_capacity(2 * num_triangles), depth: 1 };
         let mut root = BVHNode { bounds : Default::default(), content: BVHNodeContent::Leaf { offset: 0, count: num_triangles as u32}};
 
-        //root.update_bounds(triangles);
         bvh.update_bounds(&mut root);
         bvh.nodes.push(root);
-        bvh.subdivide(&mut root);
+        //bvh.subdivide(&mut root);
+        bvh.subdivide(Self::ROOT_NODE as u32, 1);
 
         bvh
     }
@@ -291,18 +294,21 @@ impl <'a> BVH<'a>
         if let BVHNodeContent::Leaf{ offset, count } = node.content {
             for idx in offset..offset+count {
                 let idx = idx as usize;
-                node.bounds.min.min(&self.triangles[idx].v0);
-                node.bounds.min.min(&self.triangles[idx].v1);
-                node.bounds.min.min(&self.triangles[idx].v2);
-                node.bounds.max.max(&self.triangles[idx].v0);
-                node.bounds.max.max(&self.triangles[idx].v1);
-                node.bounds.max.max(&self.triangles[idx].v2);
+                node.bounds.min = node.bounds.min.min(&self.triangles[idx].v0);
+                node.bounds.min = node.bounds.min.min(&self.triangles[idx].v1);
+                node.bounds.min = node.bounds.min.min(&self.triangles[idx].v2);
+                node.bounds.max = node.bounds.max.max(&self.triangles[idx].v0);
+                node.bounds.max = node.bounds.max.max(&self.triangles[idx].v1);
+                node.bounds.max = node.bounds.max.max(&self.triangles[idx].v2);
             }
         }
     }
 
-    fn subdivide(&mut self, node: &mut BVHNode)
+    //fn subdivide(&mut self, node: &mut BVHNode)
+    fn subdivide(&mut self, node_idx: u32, depth: u32)
     {
+        self.depth = self.depth.max(depth);
+        let node = self.nodes[node_idx as usize];
         if let BVHNodeContent::Leaf{ offset, count } = node.content {
             if (count >= 2) {
                 // determine split axis
@@ -319,9 +325,8 @@ impl <'a> BVH<'a>
                 // split the triangle list
                 let mut i:usize = offset.try_into().unwrap();
                 let mut j:usize = (offset + count - 1).try_into().unwrap();
-                while (i <= j)
-                {
-                    if self.triangles[i].center[axis] >= split_pos {
+                while i <= j && j > 0 {
+                    if self.triangles[i].center[axis] <= split_pos {
                         let temp = self.triangles[j];
                         self.triangles[j] = self.triangles[i];
                         self.triangles[i] = temp;
@@ -333,6 +338,9 @@ impl <'a> BVH<'a>
                 }
 
                 let left_count:u32 = i as u32 - offset;
+                #[cfg(debug_assertions)]
+                println!("node {}: split {} at {}/{}", node_idx, "xyz".chars().nth(axis).unwrap(), left_count, count);
+                
                 if left_count > 0 && left_count < count {
                     // create children
                     let mut left_child = BVHNode { bounds: Default::default(), content: BVHNodeContent::Leaf { offset, count: left_count } };
@@ -343,10 +351,10 @@ impl <'a> BVH<'a>
                     self.nodes.push(left_child);
                     self.nodes.push(right_child);
                     // update the leaf node to an internal one
-                    node.content = BVHNodeContent::Internal { left_child: next_idx, right_child: next_idx + 1 };
+                    self.nodes[node_idx as usize].content = BVHNodeContent::Internal { left_child: next_idx, right_child: next_idx + 1 };
                     // recurse
-                    self.subdivide(&mut left_child);
-                    self.subdivide(&mut right_child);
+                    self.subdivide(next_idx, depth + 1);
+                    self.subdivide(next_idx+1, depth + 1);
                 }
             }
                 
@@ -366,7 +374,7 @@ impl <'a> BVH<'a>
                             left_hit
                         }
                     } else {
-                        self.intersect_node(&self.nodes[right_child as usize], ray) 
+                        right_hit
                     }
                 }
                 BVHNodeContent::Leaf { offset, count } => {
@@ -383,15 +391,60 @@ impl <'a> BVH<'a>
             None
         }
     }
+
+    pub fn get_aabbs_up_to_depth(&self, depth: u32) -> Vec::<AABB> {
+        let mut aabbs = Vec::new();
+
+        let mut curr_nodes = VecDeque::from([(&self.nodes[Self::ROOT_NODE], 0)]);
+        while !curr_nodes.is_empty() {
+            let (&BVHNode { bounds, content }, node_depth) = curr_nodes.pop_front().unwrap();
+            if node_depth < depth {
+                match content {
+                    BVHNodeContent::Leaf { offset, count } => aabbs.push(bounds),
+                    BVHNodeContent::Internal { left_child, right_child } => {
+                        curr_nodes.push_back((&self.nodes[left_child as usize], node_depth + 1));
+                        curr_nodes.push_back((&self.nodes[right_child as usize], node_depth + 1));
+                    }
+                }
+            } else if node_depth == depth {
+                aabbs.push(bounds);
+            } 
+        }
+        aabbs
+    }
+
 }
 
-
 impl Intersectable for BVH<'_> {
-//impl Intersectable for BVH<'_> {
     fn intersect(&self, ray: &Ray) -> Option<f32> {
         self.intersect_node(&self.nodes[Self::ROOT_NODE], ray)
     }
 }
 
-
-
+impl fmt::Display for BVH<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "BVH: {} nodes, depth: {}", self.nodes.len(), self.depth);
+        let mut curr_nodes = VecDeque::from([(&self.nodes[Self::ROOT_NODE], Self::ROOT_NODE as u32, 0)]);
+        while !curr_nodes.is_empty() {
+            if let Some((node, idx, depth)) = curr_nodes.pop_front()
+            {
+                for _ in 0..depth {
+                    write!(f, " ");
+                }
+                write!(f, "{}: ", idx);
+                match node.content {
+                    BVHNodeContent::Internal { left_child, right_child } => {
+                        writeln!(f, "Internal node -> {} , {}", left_child, right_child);
+                        curr_nodes.push_back((&self.nodes[left_child as usize], left_child, depth + 1));
+                        curr_nodes.push_back((&self.nodes[right_child as usize], right_child, depth + 1));
+                    },
+                    BVHNodeContent::Leaf { offset, count } =>
+                    {
+                        writeln!(f, "Leaf node with {} primitives", count);
+                    }
+                };
+            }
+        }
+        Ok(())
+    }
+}
