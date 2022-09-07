@@ -11,7 +11,7 @@ pub struct Vec3 {
 }
 
 #[rustfmt::skip]
-impl_op_ex!(+ |a: &Vec3, b: &Vec3| -> Vec3 { Vec3 { x: a.x + b.x, y: a.y + b.y, z: a.z * b.z } });
+impl_op_ex!(+ |a: &Vec3, b: &Vec3| -> Vec3 { Vec3 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z } });
 #[rustfmt::skip]
 impl_op_ex_commutative!(+ |a: &Vec3, b: f32| -> Vec3 { Vec3 { x: a.x + b, y: a.y + b, z: a.z + b } });
 #[rustfmt::skip]
@@ -332,5 +332,14 @@ mod tests {
     fn inverse() {
         let m = mat3![-5.0, -2.0, 2.0, 0.0, 1.0, 3.0, -5.0, -7.0, -9.0];
         assert!((m.inverse() * m - Mat3::eye()).norm() < 1e-6);
+    }
+
+    #[test]
+    fn middle() {
+        let v1 = vec3!(0.0);
+        let v2 = vec3!(1.0);
+        let a = (v1 + v2) / 2.0;
+        println!("middle = {:?}", a);
+        assert!(a.x == 0.5 && a.y == 0.5 && a.z == 0.5);
     }
 }
