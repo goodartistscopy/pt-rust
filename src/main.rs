@@ -16,15 +16,7 @@ use crate::linalg::*;
 use crate::geometry::*;
 
 fn main() {
-    let camera = Camera::new(2.0, 30.0, (512, 512));
-    let sphere = Sphere {
-        center: Vec3 {
-            x: 0.0,
-            y: 0.0,
-            z: -3.0,
-        },
-        radius: 1.0,
-    };
+    let camera = Camera::new(1.0, 30.0, (512, 512));
 
     const LIGHT: Vec3 = Vec3 {
         x: 1.0,
