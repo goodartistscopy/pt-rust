@@ -23,56 +23,68 @@ fn main() {
         y: 2.0,
         z: 3.0,
     };
-    const NUM_SPHERES: u32 = 10;
+    const NUM_ITEMS: u32 = 100;
 
     let mut rng = rand::thread_rng();
 
-    struct ColoredSphere(Sphere, [f32;3]);
-    let mut spheres = Vec::new();
-    for i in 0..NUM_SPHERES {
-        let x = rng.gen_range(-10.0..10.0);
-        let z = rng.gen_range(-15.0..-10.0);
-        let radius = rng.gen_range(0.5..2.0);
+    struct GeomItem<'a>(Box::<dyn Intersectable + 'a>, [f32;3]);
+    let mut triangles = Vec::new();
+    let mut items = Vec::new();
+    // for i in 0..10 {
+    //     let x = rng.gen_range(-10.0..10.0);
+    //     let z = rng.gen_range(-15.0..-10.0);
+    //     let radius = rng.gen_range(0.5..2.0);
+    //     let color = rng.gen::<[f32; 3]>();
+    //     items.push(GeomItem(
+    //         Box::new(Sphere { center: vec3!(x, radius -1.0, z),
+    //                 radius }),
+    //         color)
+    //     );
+    // }
+
+
+    const S:f32 = 1.0;
+    for i in 0..NUM_ITEMS {
+        let x = rng.gen_range(-5.0..5.0);
+        let y = rng.gen_range(-5.0..5.0);
+        let z = rng.gen_range(-10.0..-5.0);
+        let d = rng.gen::<[f32; 3]>();
+        let v0 = vec3!(x + S * d[0], y + S* d[1], z + S * d[2]);
+        let d = rng.gen::<[f32; 3]>();
+        let v1 = vec3!(x + S * d[0], y + S* d[1], z + S * d[2]);
+        let d = rng.gen::<[f32; 3]>();
+        let v2 = vec3!(x + S * d[0], y + S* d[1], z + S * d[2]);
         let color = rng.gen::<[f32; 3]>();
-        spheres.push(
-            ColoredSphere(
-                Sphere {
-                    center: Vec3 {
-                        x,
-                        y: radius - 1.0,
-                        z,
-                    },
-                    radius,
-                },
-                color,
-                ));
+        items.push(GeomItem(
+                Box::new(Triangle::new(v0, v1, v2)),
+                color)
+                  );
+        triangles.push(Triangle::new(v0+0.1, v1+0.1, v2+0.1));
     }
+
+    let bvh = Box::new(BVH::new(&mut triangles));
+    items.push(GeomItem(bvh, [1.0, 0.0, 0.0]));
+
     let image = camera.trace_rays(|ray| {
         let mut lambda_closest: f32 = f32::MAX;
-        let mut sphere_closest = None;
-        for sphere in &spheres {
-            if let Some(lambda) = sphere.0.intersect(ray) {
+        let mut closest_item = None;
+        for item in &items {
+            if let Some(lambda) = item.0.intersect(ray) {
                 if (lambda < lambda_closest) {
                     lambda_closest = lambda;
-                    sphere_closest = Some(sphere);
+                    closest_item = Some(item);
                 }
             }
         }
 
         let mut color = [1.0, 1.0, 1.0];
-        if let (Some(ColoredSphere(sphere,color)), true) = (sphere_closest, lambda_closest < f32::MAX){
-            let hit = ray.orig + lambda_closest * ray.dir;
-            let hit_normal = (hit - sphere.center).normalize();
-            let l = (LIGHT - hit).normalize();
-            let alb = (l | hit_normal).max(0.0);
+        if let (Some(GeomItem(item,color)), true) = (closest_item, lambda_closest < f32::MAX) {
             [
-                (alb * color[0] * 255.0) as u8,
-                (alb * color[1] * 255.0) as u8,
-                (alb * color[2] * 255.0) as u8,
+                (color[0] * 255.0) as u8,
+                (color[1] * 255.0) as u8,
+                (color[2] * 255.0) as u8,
                 255,
-            ];
-            let n = (hit_normal + 1.0) / 2.0;
-            [ (n.x * 255.0) as u8, (n.y * 255.0) as u8, (n.z * 255.0) as u8, 255]
+            ]
         }
         else
         {
@@ -81,4 +93,4 @@ fn main() {
     });
 
     image.save_ppm("test.ppm").expect("error");
-}
+}                                            

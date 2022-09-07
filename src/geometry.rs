@@ -1,6 +1,8 @@
 use crate::linalg::*;
 use crate::image::Image;
 
+pub use super::vec3;
+
 #[derive(Debug)]
 struct Rect {
     left: f32,
@@ -120,26 +122,37 @@ impl Intersectable for Sphere {
 }
 
 
+#[derive(Clone, Copy)]
 pub struct Triangle {
     pub v0: Vec3,
     pub v1: Vec3,
     pub v2: Vec3,
+    center: Vec3
 }
 
-const EPSILON: f32 = 1e-6;
+impl Triangle {
+    const EPSILON: f32 = 1e-10; // move to intersectable ? (would still be specializable)
+
+    pub fn new(v0: Vec3, v1: Vec3, v2: Vec3) -> Self {
+        let center = (v0 + v1 + v2) / 3.0;
+        Triangle { v0, v1, v2, center }
+    }
+}
+
+
 
 impl Intersectable for Triangle {
     fn intersect(&self, ray: &Ray) -> Option<f32> {
         let e1 = self.v1 - self.v0; 
         let e2 = self.v2 - self.v0;
-        let p = ray.orig ^ e2;
+        let p = ray.dir ^ e2;
         let det = e1 | p;
         #[cfg(backface_culling)]
-        if det < EPSILON {
+        if det < Self::EPSILON {
             return None;
         }
         #[cfg(not(backface_culling))]
-        if det.abs() < EPSILON {
+        if det.abs() < Self::EPSILON {
             return None;
         }
     
@@ -147,7 +160,7 @@ impl Intersectable for Triangle {
         let t = ray.orig - self.v0;
         let u = inv_det * (t | p);
         if u < 0.0 || u > 1.0 {
-            return None;
+            return None
         }
 
         let q = t ^ e1;
@@ -157,6 +170,226 @@ impl Intersectable for Triangle {
         }
 
         Some(inv_det * (e2 | q))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct AABB
+{
+    pub min: Vec3,
+    pub max: Vec3
+}
+
+impl Default for AABB
+{
+    fn default() -> Self {
+        AABB {
+            min: vec3!(f32::MIN),
+            max: vec3!(f32::MAX)
+        }
+    }
+}
+
+impl Intersectable for AABB {
+    fn intersect(&self, ray: &Ray) -> Option<f32> {
+        // TODO: precompute 1/ray
+        let tx1 = (self.min.x - ray.orig.x) / ray.dir.x;
+        let tx2 = (self.max.x - ray.orig.x) / ray.dir.x;
+        let mut tmin = tx1.min(tx2);
+        let mut tmax = tx1.max(tx2);
+        let ty1 = (self.min.y - ray.orig.y) / ray.dir.y;
+        let ty2 = (self.max.y - ray.orig.y) / ray.dir.y;
+        tmin = tmin.max(ty1.min(ty2));
+        tmax = tmax.min(ty1.max(ty2));
+        let tz1 = (self.min.z - ray.orig.z) / ray.dir.z;
+        let tz2 = (self.max.z - ray.orig.z) / ray.dir.z;
+        tmin = tmin.max(tz1.min(tz2));
+        tmax = tmax.min(tz1.max(tz2));
+        if tmax >= tmin && tmax > 0.0 { // && tmin < ray.t
+            Some(tmin)
+        }
+        else {
+            None
+        }
+    }
+}
+
+/*
+pub struct ChildIndexes
+{
+    pub left_child: u32, 
+    pub right_child: u32 
+}
+
+pub struct PrimSpan
+{
+    pub offset: u32, 
+    pub count: u32 
+}*/
+
+// optimized ?
+// pub enum BVHodeContent {
+//     Internal { left_child: u32 /*, right_child: u32*/ },
+//     Leaf { offset: u32, count: u8 }
+// }
+#[derive(Clone, Copy)]
+pub enum BVHNodeContent {
+    Internal { left_child: u32, right_child: u32 },
+    Leaf { offset: u32, count: u32 }
+}
+
+#[derive(Clone, Copy)]
+pub struct BVHNode
+{
+    pub bounds: AABB,
+    pub content: BVHNodeContent
+}
+
+// impl <'a> BVHNode
+// {
+//     fn update_bounds(&'a mut self, triangles: &'a [Triangle]) {
+//         if let BVHNodeContent::Leaf{ offset, count } = self.content {
+//             for idx in offset..offset+count {
+//                 let idx = idx as usize;
+//                 self.bounds.min.min(&triangles[idx].v0);
+//                 self.bounds.min.min(&triangles[idx].v1);
+//                 self.bounds.min.min(&triangles[idx].v2);
+//                 self.bounds.max.max(&triangles[idx].v0);
+//                 self.bounds.max.max(&triangles[idx].v1);
+//                 self.bounds.max.max(&triangles[idx].v2);
+//             }
+//         }
+//     }
+// }
+
+pub struct BVH<'a> {
+    triangles: &'a mut [Triangle], 
+    triangle_ids: Vec::<usize>,
+    nodes: Vec::<BVHNode>
+}
+
+// impl <'a> BVH<'a>
+impl <'a> BVH<'a>
+{
+    const ROOT_NODE:usize = 0;
+
+    pub fn new(triangles: &'a mut[Triangle]) -> Self
+    {
+        let num_triangles = triangles.len();
+        let mut bvh = BVH { triangles, triangle_ids: (0..num_triangles).into_iter().collect(), nodes: Vec::with_capacity(2 * num_triangles) };
+        let mut root = BVHNode { bounds : Default::default(), content: BVHNodeContent::Leaf { offset: 0, count: num_triangles as u32}};
+
+        //root.update_bounds(triangles);
+        bvh.update_bounds(&mut root);
+        bvh.nodes.push(root);
+        bvh.subdivide(&mut root);
+
+        bvh
+    }
+
+    fn update_bounds(&self, node: &mut BVHNode) {
+        if let BVHNodeContent::Leaf{ offset, count } = node.content {
+            for idx in offset..offset+count {
+                let idx = idx as usize;
+                node.bounds.min.min(&self.triangles[idx].v0);
+                node.bounds.min.min(&self.triangles[idx].v1);
+                node.bounds.min.min(&self.triangles[idx].v2);
+                node.bounds.max.max(&self.triangles[idx].v0);
+                node.bounds.max.max(&self.triangles[idx].v1);
+                node.bounds.max.max(&self.triangles[idx].v2);
+            }
+        }
+    }
+
+    fn subdivide(&mut self, node: &mut BVHNode)
+    {
+        if let BVHNodeContent::Leaf{ offset, count } = node.content {
+            if (count >= 2) {
+                // determine split axis
+                let extent = node.bounds.max - node.bounds.min;
+                let mut axis = 0;
+                if extent.y > extent.x {
+                    axis = 1;
+                }
+                if extent.z > extent[axis] {
+                    axis = 2;
+                }
+                let split_pos = 0.5 * (node.bounds.min[axis] + node.bounds.max[axis]);
+
+                // split the triangle list
+                let mut i:usize = offset.try_into().unwrap();
+                let mut j:usize = (offset + count - 1).try_into().unwrap();
+                while (i <= j)
+                {
+                    if self.triangles[i].center[axis] >= split_pos {
+                        let temp = self.triangles[j];
+                        self.triangles[j] = self.triangles[i];
+                        self.triangles[i] = temp;
+                        j -= 1;
+                    }
+                    else {
+                        i += 1;
+                    }
+                }
+
+                let left_count:u32 = i as u32 - offset;
+                if left_count > 0 && left_count < count {
+                    // create children
+                    let mut left_child = BVHNode { bounds: Default::default(), content: BVHNodeContent::Leaf { offset, count: left_count } };
+                    let mut right_child = BVHNode { bounds: Default::default(), content: BVHNodeContent::Leaf { offset: offset + left_count, count: count - left_count} };
+                    self.update_bounds(&mut left_child);
+                    self.update_bounds(&mut right_child);
+                    let next_idx:u32 = self.nodes.len() as u32;
+                    self.nodes.push(left_child);
+                    self.nodes.push(right_child);
+                    // update the leaf node to an internal one
+                    node.content = BVHNodeContent::Internal { left_child: next_idx, right_child: next_idx + 1 };
+                    // recurse
+                    self.subdivide(&mut left_child);
+                    self.subdivide(&mut right_child);
+                }
+            }
+                
+        }
+    }
+
+    fn intersect_node(&self, node: &BVHNode, ray: &Ray) -> Option<f32> {
+        if let Some(lambda) = node.bounds.intersect(ray) {
+            match node.content {
+                BVHNodeContent::Internal { left_child, right_child } => {
+                    let left_hit = self.intersect_node(&self.nodes[left_child as usize], ray);
+                    let right_hit = self.intersect_node(&self.nodes[right_child as usize], ray);
+                    if let Some(left_lambda) = left_hit {
+                        if let Some(right_lambda) = right_hit {
+                            Some(left_lambda.min(right_lambda))
+                        } else {
+                            left_hit
+                        }
+                    } else {
+                        self.intersect_node(&self.nodes[right_child as usize], ray) 
+                    }
+                }
+                BVHNodeContent::Leaf { offset, count } => {
+                    let mut closest_hit = None;
+                    for i in offset..offset+count {
+                        if let Some(hit) = self.triangles[i as usize].intersect(ray) {
+                            closest_hit = Some(closest_hit.unwrap_or(f32::MAX).min(hit))
+                        }
+                    }
+                    closest_hit
+                }
+            }
+        } else {
+            None
+        }
+    }
+}
+
+
+impl Intersectable for BVH<'_> {
+//impl Intersectable for BVH<'_> {
+    fn intersect(&self, ray: &Ray) -> Option<f32> {
+        self.intersect_node(&self.nodes[Self::ROOT_NODE], ray)
     }
 }
 
