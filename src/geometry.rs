@@ -257,25 +257,8 @@ pub struct BVHNode
     pub content: BVHNodeContent
 }
 
-// impl <'a> BVHNode
-// {
-//     fn update_bounds(&'a mut self, triangles: &'a [Triangle]) {
-//         if let BVHNodeContent::Leaf{ offset, count } = self.content {
-//             for idx in offset..offset+count {
-//                 let idx = idx as usize;
-//                 self.bounds.min.min(&triangles[idx].v0);
-//                 self.bounds.min.min(&triangles[idx].v1);
-//                 self.bounds.min.min(&triangles[idx].v2);
-//                 self.bounds.max.max(&triangles[idx].v0);
-//                 self.bounds.max.max(&triangles[idx].v1);
-//                 self.bounds.max.max(&triangles[idx].v2);
-//             }
-//         }
-//     }
-// }
-
 pub struct BVH<'a> {
-    triangles: &'a mut [Triangle], 
+    triangles: &'a [Triangle], 
     triangle_ids: Vec::<usize>,
     nodes: Vec::<BVHNode>,
     pub depth: u32
@@ -299,16 +282,17 @@ impl <'a> BVH<'a>
         bvh
     }
 
+    #[inline]
     fn update_bounds(&self, node: &mut BVHNode) {
         if let BVHNodeContent::Leaf{ offset, count } = node.content {
             for idx in offset..offset+count {
                 let idx = idx as usize;
-                node.bounds.min = node.bounds.min.min(&self.triangles[idx].v0);
-                node.bounds.min = node.bounds.min.min(&self.triangles[idx].v1);
-                node.bounds.min = node.bounds.min.min(&self.triangles[idx].v2);
-                node.bounds.max = node.bounds.max.max(&self.triangles[idx].v0);
-                node.bounds.max = node.bounds.max.max(&self.triangles[idx].v1);
-                node.bounds.max = node.bounds.max.max(&self.triangles[idx].v2);
+                node.bounds.min = node.bounds.min.min(&self.triangles[self.triangle_ids[idx]].v0);
+                node.bounds.min = node.bounds.min.min(&self.triangles[self.triangle_ids[idx]].v1);
+                node.bounds.min = node.bounds.min.min(&self.triangles[self.triangle_ids[idx]].v2);
+                node.bounds.max = node.bounds.max.max(&self.triangles[self.triangle_ids[idx]].v0);
+                node.bounds.max = node.bounds.max.max(&self.triangles[self.triangle_ids[idx]].v1);
+                node.bounds.max = node.bounds.max.max(&self.triangles[self.triangle_ids[idx]].v2);
             }
         }
     }
@@ -335,10 +319,10 @@ impl <'a> BVH<'a>
                 let mut i:usize = offset.try_into().unwrap();
                 let mut j:usize = (offset + count - 1).try_into().unwrap();
                 while i <= j && j > 0 {
-                    if self.triangles[i].center[axis] <= split_pos {
-                        let temp = self.triangles[j];
-                        self.triangles[j] = self.triangles[i];
-                        self.triangles[i] = temp;
+                    if self.triangles[self.triangle_ids[i]].center[axis] <= split_pos {
+                        let temp = self.triangle_ids[j];
+                        self.triangle_ids[j] = self.triangle_ids[i];
+                        self.triangle_ids[i] = temp;
                         j -= 1;
                     }
                     else {
@@ -389,7 +373,7 @@ impl <'a> BVH<'a>
                 BVHNodeContent::Leaf { offset, count } => {
                     let mut closest_hit = None;
                     for i in offset..offset+count {
-                        if let Some(hit) = self.triangles[i as usize].intersect(ray) {
+                        if let Some(hit) = self.triangles[self.triangle_ids[i as usize]].intersect(ray) {
                             closest_hit = Some(closest_hit.unwrap_or(f32::MAX).min(hit))
                         }
                     }
