@@ -82,17 +82,35 @@ impl Camera {
 
                 // ray.dir = top_left.vec3() + (x as f32) * vright + (y as f32) * vbottom;
 
+                ray.update_inverse_dir();
+                    
                 let col = intersect_scene(&ray);
                 img.put_pixel(x, y, &col);
             }
         }
         img
     }
+                        ray.update_inverse_dir();
+
 }
 
 pub struct Ray {
     pub orig: Vec3,
     pub dir: Vec3,
+    one_over_dir: Vec3
+}
+
+impl Ray
+{
+    pub fn new(orig: Vec3, dir: Vec3) -> Ray
+    {
+        Ray { orig, dir, one_over_dir: 1.0 / dir }
+    }
+
+    fn update_inverse_dir(&mut self)
+    {
+        self.one_over_dir = 1.0 / self.dir;
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -195,17 +213,17 @@ impl Default for AABB
 
 impl Intersectable for AABB {
     fn intersect(&self, ray: &Ray) -> Option<f32> {
-        // TODO: precompute 1/ray
-        let tx1 = (self.min.x - ray.orig.x) / ray.dir.x;
-        let tx2 = (self.max.x - ray.orig.x) / ray.dir.x;
+        debug_assert!(!(ray.one_over_dir.x * ray.one_over_dir.y * ray.one_over_dir.z).is_normal() || ((ray.one_over_dir | ray.dir) - 3.0).abs() < 1.0e-6);
+        let tx1 = (self.min.x - ray.orig.x) * ray.one_over_dir.x;
+        let tx2 = (self.max.x - ray.orig.x) * ray.one_over_dir.x;
         let mut tmin = tx1.min(tx2);
         let mut tmax = tx1.max(tx2);
-        let ty1 = (self.min.y - ray.orig.y) / ray.dir.y;
-        let ty2 = (self.max.y - ray.orig.y) / ray.dir.y;
+        let ty1 = (self.min.y - ray.orig.y) * ray.one_over_dir.y;
+        let ty2 = (self.max.y - ray.orig.y) * ray.one_over_dir.y;
         tmin = tmin.max(ty1.min(ty2));
         tmax = tmax.min(ty1.max(ty2));
-        let tz1 = (self.min.z - ray.orig.z) / ray.dir.z;
-        let tz2 = (self.max.z - ray.orig.z) / ray.dir.z;
+        let tz1 = (self.min.z - ray.orig.z) * ray.one_over_dir.z;
+        let tz2 = (self.max.z - ray.orig.z) * ray.one_over_dir.z;
         tmin = tmin.max(tz1.min(tz2));
         tmax = tmax.min(tz1.max(tz2));
         if tmax >= tmin && tmax > 0.0 { // && tmin < ray.t
