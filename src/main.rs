@@ -98,7 +98,7 @@ fn main() {
         items.push(GeomItem(bvh, [1.0, 0.0, 0.0]));
     }
 
-    let image = camera.trace_rays(|ray| {
+    let image = camera.trace_rays_tiled(16, |ray| {
         let mut lambda_closest: f32 = f32::MAX;
         let mut closest_item = None;
         for item in &items {

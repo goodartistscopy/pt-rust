@@ -2,7 +2,7 @@ use std::fmt;
 use std::collections::VecDeque;
 
 use crate::linalg::*;
-use crate::image::Image;
+use crate::image::{Image, LinearImage, TiledImage};
 
 pub use super::vec3;
 
@@ -54,18 +54,11 @@ impl Camera {
     pub fn trace_rays(
         &self,
         /*transform: &Mat4, */ intersect_scene: impl Fn(&Ray) -> [u8; 4],
-        ) -> Image {
-        let mut img = Image::new(self.resolution.0, self.resolution.1);
+        ) -> LinearImage {
+        let mut img = LinearImage::new(self.resolution.0, self.resolution.1);
 
-        let mut ray = Ray {
-            orig: Default::default(),
-            //orig: xform * <Vec3 as Default>::default(),
-            dir: Vec3 {
-                x: 0.0,
-                y: 0.0,
-                z: -self.focal,
-            },
-        };
+
+        let mut ray = Ray::new(Default::default(), vec3![0.0, 0.0, -self.focal]);
 
         // let top_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
         // let top_right = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
@@ -90,8 +83,43 @@ impl Camera {
         }
         img
     }
+
+    pub fn trace_rays_tiled(
+        &self, tile_size: u16,
+        /*transform: &Mat4, */ intersect_scene: impl Fn(&Ray) -> [u8; 4],
+        ) -> TiledImage {
+        let mut img = TiledImage::new(self.resolution.0, self.resolution.1, tile_size);
+
+
+        let mut ray = Ray::new(Default::default(), vec3![0.0, 0.0, -self.focal]);
+
+        // let top_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
+        // let top_right = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
+        // let bottom_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
+        // let vright = (top_right - top_left).xyz() / (img.width as f32);
+        // let vbottom = (bottom_left - top_left).xyz() / (img.width as f32);
+
+        let (width, height) = img.get_size();
+        for ty in (0..height).step_by(tile_size.into()) {
+            for tx in (0..width).step_by(tile_size.into()) {
+                for y in ty..ty+tile_size {
+                    for x in tx..tx+tile_size {
+                        ray.dir.x = self.image_plane.left
+                            + ((x as f32) / (width as f32)) * self.image_plane.width();
+                        ray.dir.y = self.image_plane.top
+                            - ((y as f32) / (height as f32)) * self.image_plane.height();
+
+                        // ray.dir = top_left.vec3() + (x as f32) * vright + (y as f32) * vbottom;
+
                         ray.update_inverse_dir();
 
+                        let col = intersect_scene(&ray);
+                        img.put_pixel(x, y, &col);
+                    }}
+            }
+        }
+        img
+    }
 }
 
 pub struct Ray {
