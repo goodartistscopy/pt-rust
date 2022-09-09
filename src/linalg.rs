@@ -291,6 +291,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn middle() {
+        let v1 = vec3!(0.0);
+        let v2 = vec3!(1.0);
+        let a = (v1 + v2) / 2.0;
+        assert!(a.x == 0.5 && a.y == 0.5 && a.z == 0.5);
+    }
+
+    #[test]
+    fn div_by_scalar() {
+        let v1 = vec3![1.0, 2.0, 3.0];
+        let v2 = 1.0 / v1;
+        assert!(v2 == vec3![1.0, 0.5, 1.0/3.0]);
+        let s = v1 | v2;
+        assert!(s == 3.0);
+    }
+
+    #[test]
     fn identity_mult() {
         let a = Mat3::eye();
         let b = Mat3::eye();
@@ -332,14 +349,5 @@ mod tests {
     fn inverse() {
         let m = mat3![-5.0, -2.0, 2.0, 0.0, 1.0, 3.0, -5.0, -7.0, -9.0];
         assert!((m.inverse() * m - Mat3::eye()).norm() < 1e-6);
-    }
-
-    #[test]
-    fn middle() {
-        let v1 = vec3!(0.0);
-        let v2 = vec3!(1.0);
-        let a = (v1 + v2) / 2.0;
-        println!("middle = {:?}", a);
-        assert!(a.x == 0.5 && a.y == 0.5 && a.z == 0.5);
     }
 }
