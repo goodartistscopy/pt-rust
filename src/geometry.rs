@@ -170,7 +170,6 @@ impl Intersectable for Sphere {
     }
 }
 
-
 #[derive(Clone, Copy, Debug)]
 pub struct Triangle {
     pub v0: Vec3,
@@ -304,7 +303,6 @@ impl <'a> BVH<'a>
 
         bvh.update_bounds(&mut root);
         bvh.nodes.push(root);
-        //bvh.subdivide(&mut root);
         bvh.subdivide(Self::ROOT_NODE as u32, 1);
 
         bvh
@@ -325,7 +323,6 @@ impl <'a> BVH<'a>
         }
     }
 
-    //fn subdivide(&mut self, node: &mut BVHNode)
     fn subdivide(&mut self, node_idx: u32, depth: u32)
     {
         self.depth = self.depth.max(depth);
@@ -348,9 +345,7 @@ impl <'a> BVH<'a>
                 let mut j:usize = (offset + count - 1).try_into().unwrap();
                 while i <= j && j > 0 {
                     if self.triangles[self.triangle_ids[i]].center[axis] <= split_pos {
-                        let temp = self.triangle_ids[j];
-                        self.triangle_ids[j] = self.triangle_ids[i];
-                        self.triangle_ids[i] = temp;
+                        (self.triangle_ids[j], self.triangle_ids[i]) = (self.triangle_ids[i], self.triangle_ids[j]);
                         j -= 1;
                     }
                     else {

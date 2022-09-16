@@ -109,8 +109,6 @@ fn main() {
                 }
             }
         }
-
-        let mut color = [1.0, 1.0, 1.0];
         if let (Some(GeomItem(item, color)), true) = (closest_item, lambda_closest < f32::MAX) {
             [
                 (color[0] * 255.0) as u8,
@@ -126,8 +124,5 @@ fn main() {
     });
 
     image.save_ppm("test.ppm").expect("error");
-
-    use std::mem::size_of;
-    println!("Node size: {}", size_of::<BVHNode>());
 }
 
