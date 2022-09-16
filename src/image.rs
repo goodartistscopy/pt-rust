@@ -95,7 +95,7 @@ impl Image for LinearImage {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TiledImage {
     width: u16,
     height: u16,
@@ -129,6 +129,15 @@ impl TiledImage {
         image.data.resize(size, [0u8;4]);
         image
     }
+
+    #[inline]
+    pub fn put_pixel_from_tile(&mut self, tile_x: u16, tile_y: u16, local_x: u16, local_y: u16, color: &[u8; 4]) {
+        // accessing the padding is allowed, avoiding additional tests
+        debug_assert!(tile_x < self.num_tiles.0 && tile_y < self.num_tiles.1 && local_x < self.tile_size && local_y < self.tile_size);
+
+        let tile_start: usize = (((tile_y as usize * self.num_tiles.0 as usize) + tile_x as usize) * self.tile_offset).into();
+        self.data[tile_start + local_y as usize * self.tile_size as usize + local_x as usize] = *color;
+    }
 }
 
 impl Image for TiledImage {
@@ -139,7 +148,8 @@ impl Image for TiledImage {
 
     #[inline]
     fn put_pixel(&mut self, x: u16, y: u16, color: &[u8; 4]) {
-        debug_assert!((x < self.logical_width) && (y < self.logical_height));
+        // accessing the padding is allowed, avoiding additional tests
+        debug_assert!((x < self.width) && (y < self.height));
 
         let (tx, ty) = (x / self.tile_size, y / self.tile_size);
         let (lx, ly) = (x % self.tile_size, y % self.tile_size);
@@ -186,5 +196,4 @@ mod tests {
         assert!(img.logical_width != img.width && img.logical_height != img.height);
         assert!(img.num_tiles == (3, 2));
     }
-
 }

@@ -1,5 +1,8 @@
 use std::fmt;
 use std::collections::VecDeque;
+use std::cell::Cell;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use crate::linalg::*;
 use crate::image::{Image, LinearImage, TiledImage};
@@ -120,6 +123,83 @@ impl Camera {
         }
         img
     }
+
+    pub fn trace_rays_tiled_mt(
+        &self, tile_size: u16,
+        intersect_scene: &(impl Fn(&Ray) -> [u8; 4] + std::marker::Sync),
+        ) -> TiledImage {
+
+        struct TileScheduler
+        {
+            next_tile: Mutex::<Option::<(u16, u16)>>,
+            num_tiles: (u16, u16)
+        };
+
+        impl TileScheduler {
+            pub fn new(num_tiles: (u16, u16)) -> Self
+            {
+                Self { next_tile: Mutex::new(Some((0,0))), num_tiles }
+            }
+
+            pub fn get_next(&self) -> Option::<(u16,u16)> {
+                let mut tile = self.next_tile.lock().unwrap();
+                let cur_tile = *tile;
+                *tile = match *tile {
+                    None => None,
+                    Some((x,y)) if x + 1 < self.num_tiles.0 => Some((x+1, y)),
+                    Some((x,y)) if y + 1 < self.num_tiles.1 => Some((0, y+1)),
+                    _ => None
+                };
+                cur_tile
+            }
+        }
+
+        let num_threads = thread::available_parallelism().map_or(2, |x| { x.get() });
+        let img = Arc::new(Mutex::new(TiledImage::new(self.resolution.0, self.resolution.1, tile_size)));
+
+        let (num_tiles, width, height) = {
+            let img = img.lock();
+            (((img.as_ref().unwrap().get_size().0 + tile_size - 1) / tile_size,
+              (img.as_ref().unwrap().get_size().1 + tile_size - 1) / tile_size),
+             img.as_ref().unwrap().get_size().0,
+             img.as_ref().unwrap().get_size().1)
+        };
+
+        println!("Using {} threads to process {} tiles", num_threads, num_tiles.0 * num_tiles.1);
+
+        let sched = Arc::new(TileScheduler::new(num_tiles));
+        thread::scope(|s| {
+            for i in 0..num_threads {
+                let img = Arc::clone(&img);
+                let sched = Arc::clone(&sched);
+                s.spawn(move ||{
+                    let mut ray = Ray::new(Default::default(), vec3![0.0, 0.0, -self.focal]);
+                    while let Some((tx, ty)) = sched.get_next() {
+                        //println!("#{} | tile = {},{}", i, tx, ty);
+                        let x0 = tx * tile_size;
+                        let y0 = ty * tile_size;
+                        for y in 0..tile_size {
+                            for x in 0..tile_size {
+
+                                ray.dir.x = self.image_plane.left
+                                    + (((x0 + x) as f32) / (width as f32)) * self.image_plane.width();
+                                ray.dir.y = self.image_plane.top
+                                    - (((y0 + y) as f32) / (height as f32)) * self.image_plane.height();
+
+                                ray.update_inverse_dir();
+
+                                let col = intersect_scene(&ray);
+
+                                img.lock().unwrap().put_pixel_from_tile(tx, ty, x, y, &col);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        let x = img.lock().unwrap().clone(); x
+    }
 }
 
 pub struct Ray {
@@ -147,7 +227,7 @@ pub struct Sphere {
     pub radius: f32,
 }
 
-pub trait Intersectable
+pub trait Intersectable : Sync
 {
     fn intersect(&self, ray: &Ray) -> Option<f32>;
 }

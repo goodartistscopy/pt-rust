@@ -23,7 +23,7 @@ fn main() {
         y: 2.0,
         z: 3.0,
     };
-    const NUM_ITEMS: u32 = 1024;
+    const NUM_ITEMS: u32 = 50024;
 
     let mut rng = rand::thread_rng();
 
@@ -82,6 +82,7 @@ fn main() {
 
     let bvh = Box::new(BVH::new(&mut triangles));
     println!("BVH depth = {}", bvh.depth);
+    //println!("BVH = {}", bvh);
 
     // draw BVH bounding boxes
     if (false) {
@@ -98,7 +99,8 @@ fn main() {
         items.push(GeomItem(bvh, [1.0, 0.0, 0.0]));
     }
 
-    let image = camera.trace_rays_tiled(16, |ray| {
+//    let image = camera.trace_rays_tiled(4, |ray| {
+    let image = camera.trace_rays_tiled_mt(16, &|ray| {
         let mut lambda_closest: f32 = f32::MAX;
         let mut closest_item = None;
         for item in &items {
