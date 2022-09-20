@@ -48,19 +48,6 @@ impl LinearImage {
         // }
         image
     }
-
-    /*
-    pub fn save_ppm(&self, filepath: &str) -> std::io::Result<()> {
-        let mut f = BufWriter::new(File::create(filepath)?);
-
-        write!(f, "P3\n{} {}\n255\n\n", self.width, self.height)?;
-
-        for &pixel in &self.data {
-            writeln!(f, "{} {} {}", pixel[0], pixel[1], pixel[2])?;
-        }
-
-        Ok(())
-    }*/
 }
 
 impl Image for LinearImage {

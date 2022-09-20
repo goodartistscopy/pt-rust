@@ -208,8 +208,7 @@ pub struct Ray {
     one_over_dir: Vec3
 }
 
-impl Ray
-{
+impl Ray {
     pub fn new(orig: Vec3, dir: Vec3) -> Ray
     {
         Ray { orig, dir, one_over_dir: 1.0 / dir }
@@ -259,7 +258,7 @@ pub struct Triangle {
 }
 
 impl Triangle {
-    const EPSILON: f32 = 1e-10; // move to intersectable ? (would still be specializable)
+    const EPSILON: f32 = 1e-10; // XXX move to intersectable ? (would still be specializable)
 
     pub fn new(v0: Vec3, v1: Vec3, v2: Vec3) -> Self {
         let center = (v0 + v1 + v2) / 3.0;
@@ -320,7 +319,6 @@ impl Default for AABB
 
 impl Intersectable for AABB {
     fn intersect(&self, ray: &Ray) -> Option<f32> {
-        debug_assert!(!(ray.one_over_dir.x * ray.one_over_dir.y * ray.one_over_dir.z).is_normal() || ((ray.one_over_dir | ray.dir) - 3.0).abs() < 1.0e-6);
         let tx1 = (self.min.x - ray.orig.x) * ray.one_over_dir.x;
         let tx2 = (self.max.x - ray.orig.x) * ray.one_over_dir.x;
         let mut tmin = tx1.min(tx2);
