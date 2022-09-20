@@ -30,7 +30,9 @@ impl_op_ex!(^ |a: &Vec3, b: &Vec3| -> Vec3 { Vec3 {
     y: a.z * b.x - a.x * b.z,
     z: a.x * b.y - a.y * b.x
 }});
-
+#[rustfmt::skip]
+impl_op!(- |a: &Vec3| -> Vec3 { Vec3 { x: -a.x, y: -a.y, z: -a.z } });
+impl_op!(- |a: Vec3| -> Vec3 { Vec3 { x: -a.x, y: -a.y, z: -a.z } });
 
 impl Vec3 {
     pub fn normalize(&mut self) -> Self {
@@ -171,6 +173,16 @@ impl Mat3 {
         m[(1, 1)] = x;
         m[(2, 2)] = x;
         m
+    }
+
+    pub fn new_from_cols(c0: &Vec3, c1: &Vec3, c2: &Vec3) -> Self
+    {
+        Mat3 { elems: [c0.x, c1.x, c2.x, c0.y, c1.y, c2.y, c0.z, c1.z, c2.z] }
+    }
+
+    pub fn new_from_rows(r0: &Vec3, r1: &Vec3, r2: &Vec3) -> Self
+    {
+        Mat3 { elems: [r0.x, r0.y, r0.z, r1.x, r1.y, r1.z, r2.x, r2.y, r2.z] }
     }
 
     pub fn eye() -> Self {
