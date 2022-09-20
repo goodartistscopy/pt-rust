@@ -251,9 +251,17 @@ impl Intersectable for Sphere {
         if delta < 0.0 {
             None
         } else {
-            let lambda1 = (-b - delta.sqrt()) / a;
-            //let lambda1 = (-b + delta.sqrt()) / a;
-            Some(lambda1)
+            let t1 = (-b - delta.sqrt()) / a;
+            if t1 > 0.0 {
+                Some(t1)
+            } else {
+                let t2 = (-b + delta.sqrt()) / a;
+                if t2 > 0.0 {
+                    Some(t2)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -311,7 +319,12 @@ impl Triangle {
             return None;
         }
 
-        Some(vec3![inv_det * (e2 | q), u, v])
+        let t = inv_det * (e2 | q);
+        if t > 0.0 {
+            Some(vec3![t, u, v])
+        } else {
+            None
+        }
     }
 }
 
@@ -327,7 +340,13 @@ impl Intersectable for Triangle {
     fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)> {
         self.hit_query_detail(ray).and_then(|Vec3{x: t, y: u, z: v}| {
             let normal = ((self.v1 - self.v0) ^ (self.v2 - self.v0)).normalize();
-            Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords: (u, v) }))
+            if (normal | ray.dir) > 0.0 {
+                Some((t, SurfaceData{ normal: -normal, tex_coords: (0.0, 0.0), bary_coords: (u, v) }))
+            }
+            else
+            {
+                Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords: (u, v) }))
+            }
         })
     }
 }
@@ -524,13 +543,13 @@ impl <'a> BVH<'a>
                     let mut closest_hit = None;
                     for i in offset..offset+count {
                         if let Some(Vec3{x: t, y: u, z: v}) = self.triangles[self.triangle_ids[i as usize]].hit_query_detail(ray) {
-                            if let Some(TriangleHit{t: closest_lambda, triangle_id, bary_coords}) = closest_hit {
-                                if (t < closest_lambda) {
-                                    closest_hit = Some(TriangleHit{t, triangle_id: i, bary_coords: (u,v)})
+                            if let Some(TriangleHit{t: tmin, triangle_id: _, bary_coords}) = closest_hit {
+                                if (t < tmin) {
+                                    closest_hit = Some(TriangleHit{t, triangle_id: self.triangle_ids[i as usize] as u32, bary_coords: (u,v)})
                                 }
                             }
                             else {
-                                closest_hit = Some(TriangleHit{t, triangle_id: i, bary_coords: (u,v)});
+                                closest_hit = Some(TriangleHit{t, triangle_id: self.triangle_ids[i as usize] as u32, bary_coords: (u,v)});
                             }
                         }
                     }
