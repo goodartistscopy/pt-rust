@@ -101,21 +101,25 @@ fn main() {
 
 //    let image = camera.trace_rays_tiled(4, |ray| {
     let image = camera.trace_rays_tiled_mt(16, &|ray| {
-        let mut lambda_closest: f32 = f32::MAX;
         let mut closest_item = None;
+        let mut closest_surface = Default::default();
+        let mut tmin = f32::MAX;
         for item in &items {
-            if let Some(lambda) = item.0.intersect(ray) {
-                if (lambda < lambda_closest) {
-                    lambda_closest = lambda;
+            if let Some((t, surface_data)) = item.0.surface_query(ray) {
+                if (t < tmin) {
                     closest_item = Some(item);
+                    closest_surface = surface_data;
+                    tmin = t;
                 }
             }
         }
-        if let (Some(GeomItem(item, color)), true) = (closest_item, lambda_closest < f32::MAX) {
+        if let Some(GeomItem(item, color)) = closest_item {
+
+            let albedo = (closest_surface.normal | (vec3![0.0, 10.0, 0.0]).normalize()).max(0.0);
             [
-                (color[0] * 255.0) as u8,
-                (color[1] * 255.0) as u8,
-                (color[2] * 255.0) as u8,
+                (albedo * color[0] * 255.0) as u8,
+                (albedo * color[1] * 255.0) as u8,
+                (albedo * color[2] * 255.0) as u8,
                 255,
             ]
         }

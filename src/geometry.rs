@@ -208,6 +208,13 @@ pub struct Ray {
     one_over_dir: Vec3
 }
 
+#[derive(Default)]
+pub struct SurfaceData {
+    pub normal: Vec3,
+    pub tex_coords: (f32, f32),
+    pub bary_coords: (f32, f32),
+}
+
 impl Ray {
     pub fn new(orig: Vec3, dir: Vec3) -> Ray
     {
@@ -225,14 +232,16 @@ pub struct Sphere {
     pub center: Vec3,
     pub radius: f32,
 }
-
+    
 pub trait Intersectable : Sync
 {
-    fn intersect(&self, ray: &Ray) -> Option<f32>;
+    fn hit_query(&self, ray: &Ray) -> Option<f32>;
+
+    fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)>;
 }
 
 impl Intersectable for Sphere {
-    fn intersect(&self, ray: &Ray) -> Option<f32> {
+    fn hit_query(&self, ray: &Ray) -> Option<f32> {
         let oc = ray.orig - self.center;
         let a = ray.dir | ray.dir;
         let b = oc | ray.dir;
@@ -246,6 +255,13 @@ impl Intersectable for Sphere {
             //let lambda1 = (-b + delta.sqrt()) / a;
             Some(lambda1)
         }
+    }
+
+    fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)> {
+        self.hit_query(ray).and_then(|t| {
+            let normal = (ray.orig + t * ray.dir - self.center).normalize();
+            Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords: (0.0, 0.0) }))
+        })
     }
 }
 
@@ -264,12 +280,11 @@ impl Triangle {
         let center = (v0 + v1 + v2) / 3.0;
         Triangle { v0, v1, v2, center }
     }
-}
 
-
-
-impl Intersectable for Triangle {
-    fn intersect(&self, ray: &Ray) -> Option<f32> {
+    // returns a Vec3 (t, u, v) , with t distance along ray
+    // and (u,v) barycentric coordinates of the intersection
+    fn hit_query_detail(&self, ray: &Ray) -> Option<Vec3>
+    {
         let e1 = self.v1 - self.v0; 
         let e2 = self.v2 - self.v0;
         let p = ray.dir ^ e2;
@@ -296,7 +311,24 @@ impl Intersectable for Triangle {
             return None;
         }
 
-        Some(inv_det * (e2 | q))
+        Some(vec3![inv_det * (e2 | q), u, v])
+    }
+}
+
+impl Intersectable for Triangle {
+    fn hit_query(&self, ray: &Ray) -> Option<f32> {
+        if let Some(hit) = self.hit_query_detail(ray) {
+            Some(hit.x)
+        } else {
+            None
+        }
+    }
+
+    fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)> {
+        self.hit_query_detail(ray).and_then(|Vec3{x: t, y: u, z: v}| {
+            let normal = ((self.v1 - self.v0) ^ (self.v2 - self.v0)).normalize();
+            Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords: (u, v) }))
+        })
     }
 }
 
@@ -318,7 +350,7 @@ impl Default for AABB
 }
 
 impl Intersectable for AABB {
-    fn intersect(&self, ray: &Ray) -> Option<f32> {
+    fn hit_query(&self, ray: &Ray) -> Option<f32> {
         let tx1 = (self.min.x - ray.orig.x) * ray.one_over_dir.x;
         let tx2 = (self.max.x - ray.orig.x) * ray.one_over_dir.x;
         let mut tmin = tx1.min(tx2);
@@ -337,6 +369,13 @@ impl Intersectable for AABB {
         else {
             None
         }
+    }
+
+    fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)> {
+        self.hit_query(ray).and_then(|t| {
+            let normal = vec3![1.0, 0.0, 0.0];
+            Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords: (0.0, 0.0) }))
+        })
     }
 }
 
@@ -367,6 +406,12 @@ pub struct BVH<'a> {
     triangle_ids: Vec::<usize>,
     nodes: Vec::<BVHNode>,
     pub depth: u32
+}
+
+struct TriangleHit {
+    t: f32,
+    triangle_id: u32,
+    bary_coords: (f32, f32)
 }
 
 impl <'a> BVH<'a>
@@ -455,15 +500,19 @@ impl <'a> BVH<'a>
         }
     }
 
-    fn intersect_node(&self, node: &BVHNode, ray: &Ray) -> Option<f32> {
-        if let Some(lambda) = node.bounds.intersect(ray) {
+    fn intersect_node(&self, node: &BVHNode, ray: &Ray) -> Option<TriangleHit> {
+        if let Some(_) = node.bounds.hit_query(ray) {
             match node.content {
                 BVHNodeContent::Internal { first_child } => {
                     let left_hit = self.intersect_node(&self.nodes[first_child as usize], ray);
                     let right_hit = self.intersect_node(&self.nodes[(first_child + 1) as usize], ray);
-                    if let Some(left_lambda) = left_hit {
-                        if let Some(right_lambda) = right_hit {
-                            Some(left_lambda.min(right_lambda))
+                    if let Some(TriangleHit{ t: left_lambda, .. }) = left_hit {
+                        if let Some(TriangleHit{ t: right_lambda, .. }) = right_hit {
+                            if (left_lambda < right_lambda) {
+                                Some(TriangleHit { t: left_lambda, ..left_hit.unwrap() })
+                            } else {
+                                Some(TriangleHit { t: right_lambda, ..right_hit.unwrap() })
+                            }
                         } else {
                             left_hit
                         }
@@ -474,8 +523,15 @@ impl <'a> BVH<'a>
                 BVHNodeContent::Leaf { offset, count } => {
                     let mut closest_hit = None;
                     for i in offset..offset+count {
-                        if let Some(hit) = self.triangles[self.triangle_ids[i as usize]].intersect(ray) {
-                            closest_hit = Some(closest_hit.unwrap_or(f32::MAX).min(hit))
+                        if let Some(Vec3{x: t, y: u, z: v}) = self.triangles[self.triangle_ids[i as usize]].hit_query_detail(ray) {
+                            if let Some(TriangleHit{t: closest_lambda, triangle_id, bary_coords}) = closest_hit {
+                                if (t < closest_lambda) {
+                                    closest_hit = Some(TriangleHit{t, triangle_id: i, bary_coords: (u,v)})
+                                }
+                            }
+                            else {
+                                closest_hit = Some(TriangleHit{t, triangle_id: i, bary_coords: (u,v)});
+                            }
                         }
                     }
                     closest_hit
@@ -510,8 +566,20 @@ impl <'a> BVH<'a>
 }
 
 impl Intersectable for BVH<'_> {
-    fn intersect(&self, ray: &Ray) -> Option<f32> {
-        self.intersect_node(&self.nodes[Self::ROOT_NODE], ray)
+    fn hit_query(&self, ray: &Ray) -> Option<f32> {
+        self.intersect_node(&self.nodes[Self::ROOT_NODE], ray).and_then(|TriangleHit{ t, .. }| {
+            Some(t)
+        })
+    }
+
+    fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)> {
+        self.intersect_node(&self.nodes[Self::ROOT_NODE], ray).and_then(|TriangleHit{ t, triangle_id, bary_coords }| {
+            let e1 = self.triangles[triangle_id as usize].v1 - self.triangles[triangle_id as usize].v0; 
+            let e2 = self.triangles[triangle_id as usize].v2 - self.triangles[triangle_id as usize].v0; 
+            let normal = (e1 ^ e2).normalize();
+            Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords}))
+        })
+
     }
 }
 
