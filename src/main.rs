@@ -15,6 +15,25 @@ use crate::image::*;
 use crate::linalg::*;
 use crate::geometry::*;
 
+fn cosine_weighted_hemisphere_sample() -> (Vec3, f32)
+{
+    let mut rng = rand::thread_rng();
+    let ksi = rng.gen::<[f32;2]>();
+    let cos_theta = (1.0f32 - ksi[0]).sqrt();
+    let sin_theta = ksi[0].sqrt();
+    let phi = ksi[1] * 2.0 * std::f32::consts::PI;
+
+    let dir = vec3![sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta];
+    (dir, cos_theta / std::f32::consts::PI)
+}
+
+fn compute_local_frame_xform(normal: &Vec3) -> Mat3 {
+    let up = if normal.z.abs() < 0.9 { vec3![0.0, 0.0, 1.0] } else { vec3![1.0, 0.0, 0.0] };
+    let t = (up ^ normal).normalize();
+    let b = normal ^ t;
+    Mat3::new_from_cols(&t, &b, normal)
+}
+
 fn main() {
     let camera = Camera::new(1.5, 30.0, (512, 512));
 
@@ -23,24 +42,26 @@ fn main() {
         y: 2.0,
         z: 3.0,
     };
-    const NUM_ITEMS: u32 = 50024;
+    const NUM_ITEMS: u32 = 1000;
 
     let mut rng = rand::thread_rng();
 
     struct GeomItem<'a>(Box::<dyn Intersectable + 'a>, [f32;3]);
+
     let mut triangles = Vec::new();
     let mut items = Vec::new();
-    // for i in 0..10 {
-    //     let x = rng.gen_range(-10.0..10.0);
-    //     let z = rng.gen_range(-15.0..-10.0);
-    //     let radius = rng.gen_range(0.5..2.0);
-    //     let color = rng.gen::<[f32; 3]>();
-    //     items.push(GeomItem(
-    //         Box::new(Sphere { center: vec3!(x, radius -1.0, z),
-    //                 radius }),
-    //         color)
-    //     );
-    // }
+
+    for i in 0..NUM_ITEMS {
+        let x = rng.gen_range(-10.0..10.0);
+        let z = rng.gen_range(-15.0..-10.0);
+        let radius = rng.gen_range(0.5..2.0);
+        let color = rng.gen::<[f32; 3]>();
+        items.push(GeomItem(
+            Box::new(Sphere { center: vec3!(x, radius -1.0, z),
+                    radius }),
+            color)
+        );
+    }
 
     let with_bvh = true;
 
@@ -55,7 +76,7 @@ fn main() {
         let v1 = vec3!(x + S * d[0], y + S * d[1], z + S * d[2]);
         let d = rng.gen::<[f32; 3]>();
         let v2 = vec3!(x + S * d[0], y + S * d[1], z + S * d[2]);
-        let color = rng.gen::<[f32; 3]>();
+        let color = rng.gen::<[f32; 3]>().map(|x| 0.2 + x * 0.8);
         if !with_bvh {
             items.push(GeomItem(
                     Box::new(Triangle::new(v0, v1, v2)),
@@ -113,9 +134,38 @@ fn main() {
                 }
             }
         }
-        if let Some(GeomItem(item, color)) = closest_item {
 
-            let albedo = (closest_surface.normal | (vec3![0.0, 10.0, 0.0]).normalize()).max(0.0);
+        const LIGHT: Vec3 = vec3![0.0, 1.0, 0.0];
+        if let Some(GeomItem(item, color)) = closest_item {
+            let local_xform = compute_local_frame_xform(&closest_surface.normal);
+
+            let num_shadow_samples = 100;
+            let mut albedo = 0.0;
+            let hit_point = ray.orig + (tmin * ray.dir) + (1e-4 * closest_surface.normal);
+            for i in 0..num_shadow_samples {
+                let sample = cosine_weighted_hemisphere_sample();
+                let dir = local_xform * sample.0;
+                let shadow_ray = Ray::new(hit_point, dir);
+
+                use std::ptr::eq;
+                let mut iter = items.iter();
+                let mut blocked = false;
+                let mut j = 0;
+                while let Some(block_item) = iter.next() {
+                    if block_item.0.hit_query(&shadow_ray).is_some() /*&& !eq(block_item.0.as_ref(), item.as_ref())*/ {
+                        blocked = true;
+                        break;
+                    }
+                    j += 1;
+                }
+
+                if (!blocked) {
+                    albedo += if shadow_ray.dir.y > 0.0 { 1.0 } else { 0.0 };
+                }
+            }
+            albedo /= num_shadow_samples as f32;
+
+            //let albedo = (closest_surface.normal | (vec3![0.0, 10.0, 0.0]).normalize()).max(0.0);
             [
                 (albedo * color[0] * 255.0) as u8,
                 (albedo * color[1] * 255.0) as u8,
