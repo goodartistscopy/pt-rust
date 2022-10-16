@@ -5,17 +5,19 @@
 extern crate impl_ops;
 
 pub mod image;
-pub mod linalg;
 pub mod geometry;
 
 use rand::Rng;
 use std::cmp::max;
 
 use crate::image::*;
-use crate::linalg::*;
 use crate::geometry::*;
 
-fn cosine_weighted_hemisphere_sample() -> (Vec3, f32)
+extern crate nalgebra as na;
+type Vector3 = na::Vector3<f32>;
+use na::vector;
+
+fn cosine_weighted_hemisphere_sample() -> (Vector3, f32)
 {
     let mut rng = rand::thread_rng();
     let ksi = rng.gen::<[f32;2]>();
@@ -23,25 +25,21 @@ fn cosine_weighted_hemisphere_sample() -> (Vec3, f32)
     let sin_theta = ksi[0].sqrt();
     let phi = ksi[1] * 2.0 * std::f32::consts::PI;
 
-    let dir = vec3![sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta];
+    let dir = vector![sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta];
     (dir, cos_theta / std::f32::consts::PI)
 }
 
-fn compute_local_frame_xform(normal: &Vec3) -> Mat3 {
-    let up = if normal.z.abs() < 0.9 { vec3![0.0, 0.0, 1.0] } else { vec3![1.0, 0.0, 0.0] };
-    let t = (up ^ normal).normalize();
-    let b = normal ^ t;
-    Mat3::new_from_cols(&t, &b, normal)
+fn compute_local_frame_xform(normal: &Vector3) -> Matrix3 {
+    let up = if normal.z.abs() < 0.9 { vector![0.0, 0.0, 1.0] } else { vector![1.0, 0.0, 0.0] };
+    let t = up.cross(&normal).normalize();
+    let b = normal.cross(&t);
+    Matrix3::from_columns(&[t, b, *normal])
 }
 
 fn main() {
     let camera = Camera::new(1.5, 30.0, (512, 512));
 
-    const LIGHT: Vec3 = Vec3 {
-        x: 1.0,
-        y: 2.0,
-        z: 3.0,
-    };
+    const LIGHT: Vector3 = vector![1.0, 2.0, 3.0];
     const NUM_ITEMS: u32 = 1000;
 
     let mut rng = rand::thread_rng();
@@ -57,7 +55,7 @@ fn main() {
         let radius = rng.gen_range(0.5..2.0);
         let color = rng.gen::<[f32; 3]>();
         items.push(GeomItem(
-            Box::new(Sphere { center: vec3!(x, radius -1.0, z),
+            Box::new(Sphere { center: vector!(x, radius -1.0, z),
                     radius }),
             color)
         );
@@ -71,11 +69,11 @@ fn main() {
         let y = rng.gen_range(-5.0..5.0);
         let z = rng.gen_range(-20.0..-10.0);
         let d = rng.gen::<[f32; 3]>();
-        let v0 = vec3!(x + S * d[0], y + S * d[1], z + S * d[2]);
+        let v0 = vector!(x + S * d[0], y + S * d[1], z + S * d[2]);
         let d = rng.gen::<[f32; 3]>();
-        let v1 = vec3!(x + S * d[0], y + S * d[1], z + S * d[2]);
+        let v1 = vector!(x + S * d[0], y + S * d[1], z + S * d[2]);
         let d = rng.gen::<[f32; 3]>();
-        let v2 = vec3!(x + S * d[0], y + S * d[1], z + S * d[2]);
+        let v2 = vector!(x + S * d[0], y + S * d[1], z + S * d[2]);
         let color = rng.gen::<[f32; 3]>().map(|x| 0.2 + x * 0.8);
         if !with_bvh {
             items.push(GeomItem(
@@ -83,7 +81,7 @@ fn main() {
                     color)
                       );
         }
-        let tri = Triangle::new(v0+0.1, v1+0.1, v2+0.1);
+        let tri = Triangle::new(v0 + Vector3::from_element(0.1), v1 + Vector3::from_element(0.1), v2 + Vector3::from_element(0.1));
         triangles.push(tri);
     }
 
@@ -135,7 +133,7 @@ fn main() {
             }
         }
 
-        const LIGHT: Vec3 = vec3![0.0, 1.0, 0.0];
+        const LIGHT: Vector3 = vector![0.0, 1.0, 0.0];
         if let Some(GeomItem(item, color)) = closest_item {
             let local_xform = compute_local_frame_xform(&closest_surface.normal);
 
@@ -165,7 +163,7 @@ fn main() {
             }
             albedo /= num_shadow_samples as f32;
 
-            //let albedo = (closest_surface.normal | (vec3![0.0, 10.0, 0.0]).normalize()).max(0.0);
+            //let albedo = (closest_surface.normal | (vector![0.0, 10.0, 0.0]).normalize()).max(0.0);
             [
                 (albedo * color[0] * 255.0) as u8,
                 (albedo * color[1] * 255.0) as u8,

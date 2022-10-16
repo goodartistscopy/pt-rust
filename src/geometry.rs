@@ -4,10 +4,15 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::linalg::*;
 use crate::image::{Image, LinearImage, TiledImage};
 
-pub use super::vec3;
+extern crate nalgebra as na;
+extern crate nalgebra_glm as glm;
+type Vector3 = na::Vector3<f32>;
+pub type Matrix3 = na::Matrix3<f32>;
+
+use na::vector;
+use glm::{min2, max2};
 
 #[derive(Debug)]
 struct Rect {
@@ -61,7 +66,7 @@ impl Camera {
         let mut img = LinearImage::new(self.resolution.0, self.resolution.1);
 
 
-        let mut ray = Ray::new(Default::default(), vec3![0.0, 0.0, -self.focal]);
+        let mut ray = Ray::new(Default::default(), vector![0.0, 0.0, -self.focal]);
 
         // let top_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
         // let top_right = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
@@ -94,7 +99,7 @@ impl Camera {
         let mut img = TiledImage::new(self.resolution.0, self.resolution.1, tile_size);
 
 
-        let mut ray = Ray::new(Default::default(), vec3![0.0, 0.0, -self.focal]);
+        let mut ray = Ray::new(Default::default(), vector![0.0, 0.0, -self.focal]);
 
         // let top_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
         // let top_right = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
@@ -173,9 +178,8 @@ impl Camera {
                 let img = Arc::clone(&img);
                 let sched = Arc::clone(&sched);
                 s.spawn(move ||{
-                    let mut ray = Ray::new(Default::default(), vec3![0.0, 0.0, -self.focal]);
+                    let mut ray = Ray::new(Default::default(), vector![0.0, 0.0, -self.focal]);
                     while let Some((tx, ty)) = sched.get_next() {
-                        //println!("#{} | tile = {},{}", i, tx, ty);
                         let x0 = tx * tile_size;
                         let y0 = ty * tile_size;
                         for y in 0..tile_size {
@@ -203,33 +207,33 @@ impl Camera {
 }
 
 pub struct Ray {
-    pub orig: Vec3,
-    pub dir: Vec3,
-    one_over_dir: Vec3
+    pub orig: Vector3,
+    pub dir: Vector3,
+    one_over_dir: Vector3
 }
 
 #[derive(Default)]
 pub struct SurfaceData {
-    pub normal: Vec3,
+    pub normal: Vector3,
     pub tex_coords: (f32, f32),
     pub bary_coords: (f32, f32),
 }
 
 impl Ray {
-    pub fn new(orig: Vec3, dir: Vec3) -> Ray
+    pub fn new(orig: Vector3, dir: Vector3) -> Ray
     {
-        Ray { orig, dir, one_over_dir: 1.0 / dir }
+        Ray { orig, dir, one_over_dir: Vector3::from_element(1.0).component_div(&dir) }
     }
 
     fn update_inverse_dir(&mut self)
     {
-        self.one_over_dir = 1.0 / self.dir;
+        self.one_over_dir = Vector3::from_element(1.0).component_div(&self.dir);
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct Sphere {
-    pub center: Vec3,
+    pub center: Vector3,
     pub radius: f32,
 }
     
@@ -243,9 +247,9 @@ pub trait Intersectable : Sync
 impl Intersectable for Sphere {
     fn hit_query(&self, ray: &Ray) -> Option<f32> {
         let oc = ray.orig - self.center;
-        let a = ray.dir | ray.dir;
-        let b = oc | ray.dir;
-        let c = (oc | oc) - self.radius * self.radius;
+        let a = ray.dir.dot(&ray.dir);
+        let b = oc.dot(&ray.dir);
+        let c = (oc.dot(&oc)) - self.radius * self.radius;
         let delta = b * b - a * c;
 
         if delta < 0.0 {
@@ -275,28 +279,28 @@ impl Intersectable for Sphere {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Triangle {
-    pub v0: Vec3,
-    pub v1: Vec3,
-    pub v2: Vec3,
-    center: Vec3
+    pub v0: Vector3,
+    pub v1: Vector3,
+    pub v2: Vector3,
+    center: Vector3
 }
 
 impl Triangle {
     const EPSILON: f32 = 1e-10; // XXX move to intersectable ? (would still be specializable)
 
-    pub fn new(v0: Vec3, v1: Vec3, v2: Vec3) -> Self {
+    pub fn new(v0: Vector3, v1: Vector3, v2: Vector3) -> Self {
         let center = (v0 + v1 + v2) / 3.0;
         Triangle { v0, v1, v2, center }
     }
 
-    // returns a Vec3 (t, u, v) , with t distance along ray
+    // returns a Vector3 (t, u, v) , with t distance along ray
     // and (u,v) barycentric coordinates of the intersection
-    fn hit_query_detail(&self, ray: &Ray) -> Option<Vec3>
+    fn hit_query_detail(&self, ray: &Ray) -> Option<Vector3>
     {
         let e1 = self.v1 - self.v0; 
         let e2 = self.v2 - self.v0;
-        let p = ray.dir ^ e2;
-        let det = e1 | p;
+        let p = ray.dir.cross(&e2);
+        let det = e1.dot(&p);
         #[cfg(backface_culling)]
         if det < Self::EPSILON {
             return None;
@@ -308,20 +312,20 @@ impl Triangle {
     
         let inv_det = 1.0 / det;
         let t = ray.orig - self.v0;
-        let u = inv_det * (t | p);
+        let u = inv_det * (t.dot(&p));
         if u < 0.0 || u > 1.0 {
             return None
         }
 
-        let q = t ^ e1;
-        let v = inv_det * (ray.dir | q);
+        let q = t.cross(&e1);
+        let v = inv_det * (ray.dir.dot(&q));
         if v < 0.0 || v + u > 1.0 {
             return None;
         }
 
-        let t = inv_det * (e2 | q);
+        let t = inv_det * (e2.dot(&q));
         if t > 0.0 {
-            Some(vec3![t, u, v])
+            Some(vector![t, u, v])
         } else {
             None
         }
@@ -338,9 +342,10 @@ impl Intersectable for Triangle {
     }
 
     fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)> {
-        self.hit_query_detail(ray).and_then(|Vec3{x: t, y: u, z: v}| {
-            let normal = ((self.v1 - self.v0) ^ (self.v2 - self.v0)).normalize();
-            if (normal | ray.dir) > 0.0 {
+        self.hit_query_detail(ray).and_then(|hit| {
+            let (t, u, v) = (hit[0], hit[1], hit[2]);
+            let normal = (self.v1 - self.v0).cross(&(self.v2 - self.v0)).normalize();
+            if (normal.dot(&ray.dir)) > 0.0 {
                 Some((t, SurfaceData{ normal: -normal, tex_coords: (0.0, 0.0), bary_coords: (u, v) }))
             }
             else
@@ -354,16 +359,16 @@ impl Intersectable for Triangle {
 #[derive(Clone, Copy)]
 pub struct AABB
 {
-    pub min: Vec3,
-    pub max: Vec3
+    pub min: Vector3,
+    pub max: Vector3
 }
 
 impl Default for AABB
 {
     fn default() -> Self {
         AABB {
-            min: vec3!(f32::MAX),
-            max: vec3!(f32::MIN)
+            min: Vector3::from_element(f32::MAX),
+            max: Vector3::from_element(f32::MIN)
         }
     }
 }
@@ -392,7 +397,7 @@ impl Intersectable for AABB {
 
     fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)> {
         self.hit_query(ray).and_then(|t| {
-            let normal = vec3![1.0, 0.0, 0.0];
+            let normal = vector![1.0, 0.0, 0.0];
             Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords: (0.0, 0.0) }))
         })
     }
@@ -455,12 +460,12 @@ impl <'a> BVH<'a>
         if let BVHNodeContent::Leaf{ offset, count } = node.content {
             for idx in offset..offset+count {
                 let idx = idx as usize;
-                node.bounds.min = node.bounds.min.min(&self.triangles[self.triangle_ids[idx]].v0);
-                node.bounds.min = node.bounds.min.min(&self.triangles[self.triangle_ids[idx]].v1);
-                node.bounds.min = node.bounds.min.min(&self.triangles[self.triangle_ids[idx]].v2);
-                node.bounds.max = node.bounds.max.max(&self.triangles[self.triangle_ids[idx]].v0);
-                node.bounds.max = node.bounds.max.max(&self.triangles[self.triangle_ids[idx]].v1);
-                node.bounds.max = node.bounds.max.max(&self.triangles[self.triangle_ids[idx]].v2);
+                node.bounds.min = min2(&node.bounds.min, &self.triangles[self.triangle_ids[idx]].v0);
+                node.bounds.min = min2(&node.bounds.min, &self.triangles[self.triangle_ids[idx]].v1);
+                node.bounds.min = min2(&node.bounds.min, &self.triangles[self.triangle_ids[idx]].v2);
+                node.bounds.max = max2(&node.bounds.max, &self.triangles[self.triangle_ids[idx]].v0);
+                node.bounds.max = max2(&node.bounds.max, &self.triangles[self.triangle_ids[idx]].v1);
+                node.bounds.max = max2(&node.bounds.max, &self.triangles[self.triangle_ids[idx]].v2);
             }
         }
     }
@@ -542,14 +547,15 @@ impl <'a> BVH<'a>
                 BVHNodeContent::Leaf { offset, count } => {
                     let mut closest_hit = None;
                     for i in offset..offset+count {
-                        if let Some(Vec3{x: t, y: u, z: v}) = self.triangles[self.triangle_ids[i as usize]].hit_query_detail(ray) {
+                        if let Some(hit) = self.triangles[self.triangle_ids[i as usize]].hit_query_detail(ray) {
+                            let (t, u, v) = (hit[0], hit[1], hit[2]);
                             if let Some(TriangleHit{t: tmin, triangle_id: _, bary_coords}) = closest_hit {
                                 if (t < tmin) {
-                                    closest_hit = Some(TriangleHit{t, triangle_id: self.triangle_ids[i as usize] as u32, bary_coords: (u,v)})
+                                    closest_hit = Some(TriangleHit{t, triangle_id: self.triangle_ids[i as usize] as u32, bary_coords: (u, v)})
                                 }
                             }
                             else {
-                                closest_hit = Some(TriangleHit{t, triangle_id: self.triangle_ids[i as usize] as u32, bary_coords: (u,v)});
+                                closest_hit = Some(TriangleHit{t, triangle_id: self.triangle_ids[i as usize] as u32, bary_coords: (u, v)});
                             }
                         }
                     }
@@ -595,7 +601,7 @@ impl Intersectable for BVH<'_> {
         self.intersect_node(&self.nodes[Self::ROOT_NODE], ray).and_then(|TriangleHit{ t, triangle_id, bary_coords }| {
             let e1 = self.triangles[triangle_id as usize].v1 - self.triangles[triangle_id as usize].v0; 
             let e2 = self.triangles[triangle_id as usize].v2 - self.triangles[triangle_id as usize].v0; 
-            let normal = (e1 ^ e2).normalize();
+            let normal = e1.cross(&e2).normalize();
             Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords}))
         })
 
