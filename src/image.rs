@@ -89,7 +89,7 @@ pub struct TiledImage {
     logical_width: u16,
     logical_height: u16,
     num_tiles: (u16, u16), // number of tiles in each dimensions
-    tile_size: u16,
+    pub tile_size: u16,
     tile_offset: usize, // number of pixels in a tile
     data: Vec<[u8; 4]>,
 }

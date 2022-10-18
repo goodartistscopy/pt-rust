@@ -10,6 +10,8 @@ pub mod geometry;
 use rand::Rng;
 use std::cmp::max;
 
+use std::f32::consts::PI;
+
 use crate::image::*;
 use crate::geometry::*;
 
@@ -37,6 +39,10 @@ fn compute_local_frame_xform(normal: &Vector3) -> Matrix3 {
 }
 
 fn main() {
+    let with_bvh = true;
+    let with_ao = false;
+    let with_spheres = false;
+
     let camera = Camera::new(1.5, 30.0, (512, 512));
 
     const LIGHT: Vector3 = vector![1.0, 2.0, 3.0];
@@ -49,25 +55,25 @@ fn main() {
     let mut triangles = Vec::new();
     let mut items = Vec::new();
 
-    for i in 0..NUM_ITEMS {
-        let x = rng.gen_range(-10.0..10.0);
-        let z = rng.gen_range(-15.0..-10.0);
-        let radius = rng.gen_range(0.5..2.0);
-        let color = rng.gen::<[f32; 3]>();
-        items.push(GeomItem(
-            Box::new(Sphere { center: vector!(x, radius -1.0, z),
+    if (with_spheres) {
+        for i in 0..NUM_ITEMS {
+            let x = rng.gen_range(-10.0..10.0);
+            let y = rng.gen_range(-10.0..10.0);
+            let radius = rng.gen_range(0.1..1.0);
+            let color = rng.gen::<[f32; 3]>();
+            items.push(GeomItem(
+                    Box::new(Sphere { center: vector!(x, y, radius),
                     radius }),
-            color)
-        );
+                    color)
+                      );
+        }
     }
-
-    let with_bvh = true;
 
     const S:f32 = 2.0;
     for i in 0..NUM_ITEMS {
         let x = rng.gen_range(-5.0..5.0);
         let y = rng.gen_range(-5.0..5.0);
-        let z = rng.gen_range(-20.0..-10.0);
+        let z = rng.gen_range(2.0..12.0);
         let d = rng.gen::<[f32; 3]>();
         let v0 = vector!(x + S * d[0], y + S * d[1], z + S * d[2]);
         let d = rng.gen::<[f32; 3]>();
@@ -97,7 +103,7 @@ fn main() {
         sum_runs += run_duration.as_micros();
     }
     sum_runs /= NUM_RUNS;
-    println!("BVH construciton time: {} µs", sum_runs);
+    println!("BVH construction time: {} µs", sum_runs);
 
     let bvh = Box::new(BVH::new(&mut triangles));
     println!("BVH depth = {}", bvh.depth);
@@ -118,65 +124,96 @@ fn main() {
         items.push(GeomItem(bvh, [1.0, 0.0, 0.0]));
     }
 
-//    let image = camera.trace_rays_tiled(4, |ray| {
-    let image = camera.trace_rays_tiled_mt(16, &|ray| {
-        let mut closest_item = None;
-        let mut closest_surface = Default::default();
-        let mut tmin = f32::MAX;
-        for item in &items {
-            if let Some((t, surface_data)) = item.0.surface_query(ray) {
-                if (t < tmin) {
-                    closest_item = Some(item);
-                    closest_surface = surface_data;
-                    tmin = t;
-                }
-            }
-        }
+    //let mut image = LinearImage::new(512, 512);
+    let mut image = TiledImage::new(512, 512, 16);
 
-        const LIGHT: Vector3 = vector![0.0, 1.0, 0.0];
-        if let Some(GeomItem(item, color)) = closest_item {
-            let local_xform = compute_local_frame_xform(&closest_surface.normal);
+    let mut timings = Vec::new();
+    for i in 0..100 {
+        let phi = i as f32 * PI/50.0;
+        let theta = 45.0 * PI/180.0;
+        let distance = 22.0;
+        let eye = distance * point![f32::sin(theta) * f32::cos(phi), f32::sin(theta) * f32::sin(phi), f32::cos(theta)];
+        let target = point![0.0, 0.0, 5.0];
+        let camera_position = Isometry3::look_at_rh(&eye, &target, &Vector3::z()).inverse();
 
-            let num_shadow_samples = 100;
-            let mut albedo = 0.0;
-            let hit_point = ray.orig + (tmin * ray.dir) + (1e-4 * closest_surface.normal);
-            for i in 0..num_shadow_samples {
-                let sample = cosine_weighted_hemisphere_sample();
-                let dir = local_xform * sample.0;
-                let shadow_ray = Ray::new(hit_point, dir);
+        println!("Frame {i}");
+        let mut sum_durations = 0;
+        for i in 0..NUM_RUNS {
+            let start = Instant::now();
 
-                use std::ptr::eq;
-                let mut iter = items.iter();
-                let mut blocked = false;
-                let mut j = 0;
-                while let Some(block_item) = iter.next() {
-                    if block_item.0.hit_query(&shadow_ray).is_some() /*&& !eq(block_item.0.as_ref(), item.as_ref())*/ {
-                        blocked = true;
-                        break;
+            trace_rays_tiled_mt(&mut image, &camera, &camera_position, &|ray| {  
+                //trace_rays(&mut image, &camera, &camera_position, |ray| {  
+                let mut closest_item = None;
+                let mut closest_surface = Default::default();
+                let mut tmin = f32::MAX;
+                for item in &items {
+                    if let Some((t, surface_data)) = item.0.surface_query(ray) {
+                        if (t < tmin) {
+                            closest_item = Some(item);
+                            closest_surface = surface_data;
+                            tmin = t;
+                        }
                     }
-                    j += 1;
                 }
 
-                if (!blocked) {
-                    albedo += if shadow_ray.dir.y > 0.0 { 1.0 } else { 0.0 };
+                const LIGHT: Vector3 = vector![0.0, 0.0, 10.0];
+
+                if let Some(GeomItem(item, color)) = closest_item {
+                    let mut albedo = 0.0;
+                    if (with_ao) {
+                        let local_xform = compute_local_frame_xform(&closest_surface.normal);
+
+                        let num_shadow_samples = 100;
+                        let hit_point = ray.orig + (tmin * ray.dir) + (1e-4 * closest_surface.normal);
+                        for i in 0..num_shadow_samples {
+                            let sample = cosine_weighted_hemisphere_sample();
+                            let dir = local_xform * sample.0;
+                            let shadow_ray = Ray::new(hit_point, dir);
+
+                            use std::ptr::eq;
+                            let mut iter = items.iter();
+                            let mut blocked = false;
+                            let mut j = 0;
+                            while let Some(block_item) = iter.next() {
+                                if block_item.0.hit_query(&shadow_ray).is_some() /*&& !eq(block_item.0.as_ref(), item.as_ref())*/ {
+                                    blocked = true;
+                                    break;
+                                }
+                                j += 1;
+                            }
+
+                            if (!blocked) {
+                                albedo += if shadow_ray.dir.y > 0.0 { 1.0 } else { 0.0 };
+                            }
+                        }
+                        albedo /= num_shadow_samples as f32;
+                    } else {
+                        albedo = closest_surface.normal.dot(&LIGHT.normalize()).max(0.0);
+                    }
+                    [
+                        (albedo * color[0] * 255.0) as u8,
+                        (albedo * color[1] * 255.0) as u8,
+                        (albedo * color[2] * 255.0) as u8,
+                        255,
+                    ]
+
                 }
-            }
-            albedo /= num_shadow_samples as f32;
+                else
+                {
+                    [100, 100, 100, 255]
+                }
+            });
 
-            //let albedo = (closest_surface.normal | (vector![0.0, 10.0, 0.0]).normalize()).max(0.0);
-            [
-                (albedo * color[0] * 255.0) as u8,
-                (albedo * color[1] * 255.0) as u8,
-                (albedo * color[2] * 255.0) as u8,
-                255,
-            ]
+            let run_duration = Instant::now().duration_since(start);
+            sum_durations += run_duration.as_micros();
         }
-        else
-        {
-            [100, 100, 100, 255]
-        }
-    });
 
-    image.save_ppm("test.ppm").expect("error");
+        timings.push(sum_durations / NUM_RUNS);
+
+        let filename = format!("test_{:04}.ppm", i);
+        image.save_ppm(&filename).expect("error");
+    }
+
+    println!("timings: {:?}", timings);
 }
 

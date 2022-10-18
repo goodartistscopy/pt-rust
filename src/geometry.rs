@@ -8,10 +8,11 @@ use crate::image::{Image, LinearImage, TiledImage};
 
 extern crate nalgebra as na;
 extern crate nalgebra_glm as glm;
-type Vector3 = na::Vector3<f32>;
+pub type Vector3 = na::Vector3<f32>;
+pub type Point3 = na::Point3<f32>;
 pub type Matrix3 = na::Matrix3<f32>;
-
-use na::vector;
+pub type Isometry3 = na::Isometry3<f32>;
+pub use na::{vector, point};
 use glm::{min2, max2};
 
 #[derive(Debug)]
@@ -58,156 +59,10 @@ impl Camera {
             resolution,
         }
     }
-
-    pub fn trace_rays(
-        &self,
-        /*transform: &Mat4, */ intersect_scene: impl Fn(&Ray) -> [u8; 4],
-        ) -> LinearImage {
-        let mut img = LinearImage::new(self.resolution.0, self.resolution.1);
-
-
-        let mut ray = Ray::new(Default::default(), vector![0.0, 0.0, -self.focal]);
-
-        // let top_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
-        // let top_right = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
-        // let bottom_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
-        // let vright = (top_right - top_left).xyz() / (img.width as f32);
-        // let vbottom = (bottom_left - top_left).xyz() / (img.width as f32);
-
-        for y in 0..img.height {
-            for x in 0..img.width {
-                ray.dir.x = self.image_plane.left
-                    + ((x as f32) / (img.width as f32)) * self.image_plane.width();
-                ray.dir.y = self.image_plane.top
-                    - ((y as f32) / (img.height as f32)) * self.image_plane.height();
-
-                // ray.dir = top_left.vec3() + (x as f32) * vright + (y as f32) * vbottom;
-
-                ray.update_inverse_dir();
-                    
-                let col = intersect_scene(&ray);
-                img.put_pixel(x, y, &col);
-            }
-        }
-        img
-    }
-
-    pub fn trace_rays_tiled(
-        &self, tile_size: u16,
-        /*transform: &Mat4, */ intersect_scene: impl Fn(&Ray) -> [u8; 4],
-        ) -> TiledImage {
-        let mut img = TiledImage::new(self.resolution.0, self.resolution.1, tile_size);
-
-
-        let mut ray = Ray::new(Default::default(), vector![0.0, 0.0, -self.focal]);
-
-        // let top_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
-        // let top_right = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
-        // let bottom_left = xform * vec4![self.image_plane.left, self.image_plane.top, -focal, 1.0];
-        // let vright = (top_right - top_left).xyz() / (img.width as f32);
-        // let vbottom = (bottom_left - top_left).xyz() / (img.width as f32);
-
-        let (width, height) = img.get_size();
-        for ty in (0..height).step_by(tile_size.into()) {
-            for tx in (0..width).step_by(tile_size.into()) {
-                for y in ty..ty+tile_size {
-                    for x in tx..tx+tile_size {
-                        ray.dir.x = self.image_plane.left
-                            + ((x as f32) / (width as f32)) * self.image_plane.width();
-                        ray.dir.y = self.image_plane.top
-                            - ((y as f32) / (height as f32)) * self.image_plane.height();
-
-                        // ray.dir = top_left.vec3() + (x as f32) * vright + (y as f32) * vbottom;
-
-                        ray.update_inverse_dir();
-
-                        let col = intersect_scene(&ray);
-                        img.put_pixel(x, y, &col);
-                    }}
-            }
-        }
-        img
-    }
-
-    pub fn trace_rays_tiled_mt(
-        &self, tile_size: u16,
-        intersect_scene: &(impl Fn(&Ray) -> [u8; 4] + std::marker::Sync),
-        ) -> TiledImage {
-
-        struct TileScheduler
-        {
-            next_tile: Mutex::<Option::<(u16, u16)>>,
-            num_tiles: (u16, u16)
-        };
-
-        impl TileScheduler {
-            pub fn new(num_tiles: (u16, u16)) -> Self
-            {
-                Self { next_tile: Mutex::new(Some((0,0))), num_tiles }
-            }
-
-            pub fn get_next(&self) -> Option::<(u16,u16)> {
-                let mut tile = self.next_tile.lock().unwrap();
-                let cur_tile = *tile;
-                *tile = match *tile {
-                    None => None,
-                    Some((x,y)) if x + 1 < self.num_tiles.0 => Some((x+1, y)),
-                    Some((x,y)) if y + 1 < self.num_tiles.1 => Some((0, y+1)),
-                    _ => None
-                };
-                cur_tile
-            }
-        }
-
-        let num_threads = thread::available_parallelism().map_or(2, |x| { x.get() });
-        let img = Arc::new(Mutex::new(TiledImage::new(self.resolution.0, self.resolution.1, tile_size)));
-
-        let (num_tiles, width, height) = {
-            let img = img.lock();
-            (((img.as_ref().unwrap().get_size().0 + tile_size - 1) / tile_size,
-              (img.as_ref().unwrap().get_size().1 + tile_size - 1) / tile_size),
-             img.as_ref().unwrap().get_size().0,
-             img.as_ref().unwrap().get_size().1)
-        };
-
-        println!("Using {} threads to process {} tiles", num_threads, num_tiles.0 * num_tiles.1);
-
-        let sched = Arc::new(TileScheduler::new(num_tiles));
-        thread::scope(|s| {
-            for i in 0..num_threads {
-                let img = Arc::clone(&img);
-                let sched = Arc::clone(&sched);
-                s.spawn(move ||{
-                    let mut ray = Ray::new(Default::default(), vector![0.0, 0.0, -self.focal]);
-                    while let Some((tx, ty)) = sched.get_next() {
-                        let x0 = tx * tile_size;
-                        let y0 = ty * tile_size;
-                        for y in 0..tile_size {
-                            for x in 0..tile_size {
-
-                                ray.dir.x = self.image_plane.left
-                                    + (((x0 + x) as f32) / (width as f32)) * self.image_plane.width();
-                                ray.dir.y = self.image_plane.top
-                                    - (((y0 + y) as f32) / (height as f32)) * self.image_plane.height();
-
-                                ray.update_inverse_dir();
-
-                                let col = intersect_scene(&ray);
-
-                                img.lock().unwrap().put_pixel_from_tile(tx, ty, x, y, &col);
-                            }
-                        }
-                    }
-                });
-            }
-        });
-
-        let x = img.lock().unwrap().clone(); x
-    }
 }
 
 pub struct Ray {
-    pub orig: Vector3,
+    pub orig: Point3,
     pub dir: Vector3,
     one_over_dir: Vector3
 }
@@ -220,7 +75,7 @@ pub struct SurfaceData {
 }
 
 impl Ray {
-    pub fn new(orig: Vector3, dir: Vector3) -> Ray
+    pub fn new(orig: Point3, dir: Vector3) -> Ray
     {
         Ray { orig, dir, one_over_dir: Vector3::from_element(1.0).component_div(&dir) }
     }
@@ -229,6 +84,103 @@ impl Ray {
     {
         self.one_over_dir = Vector3::from_element(1.0).component_div(&self.dir);
     }
+}
+
+pub fn trace_rays(image: &mut LinearImage, camera: &Camera, view_transform: &Isometry3, intersect_scene: impl Fn(&Ray) -> [u8; 4])
+{
+    let ip = &camera.image_plane;
+    let top_left = view_transform * point![ip.left, ip.top, -camera.focal];
+    let image_x = view_transform * vector![ip.right - ip.left, 0.0, 0.0];
+    let image_y = view_transform * vector![0.0, ip.bottom - ip.top, 0.0];
+
+    let mut ray = Ray::new(view_transform * Point3::origin(), Default::default());
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let p = top_left + ((x as f32) / (image.width as f32)) * image_x + ((y as f32) / (image.height as f32)) * image_y;
+            ray.dir = (p - ray.orig).normalize();
+            ray.update_inverse_dir();
+
+            let col = intersect_scene(&ray);
+
+            image.put_pixel(x, y, &col);
+        }
+    }
+}
+
+pub fn trace_rays_tiled_mt(
+    image: &mut TiledImage,
+    camera: &Camera,
+    view_transform: &Isometry3, 
+    intersect_scene: &(impl Fn(&Ray) -> [u8; 4] + std::marker::Sync)
+    ) {
+    struct TileScheduler
+    {
+        next_tile: Mutex::<Option::<(u16, u16)>>,
+        num_tiles: (u16, u16)
+    };
+
+    impl TileScheduler {
+        pub fn new(num_tiles: (u16, u16)) -> Self
+        {
+            Self { next_tile: Mutex::new(Some((0,0))), num_tiles }
+        }
+
+        pub fn get_next(&self) -> Option::<(u16,u16)> {
+            let mut tile = self.next_tile.lock().unwrap();
+            let cur_tile = *tile;
+            *tile = match *tile {
+                None => None,
+                Some((x,y)) if x + 1 < self.num_tiles.0 => Some((x+1, y)),
+                Some((x,y)) if y + 1 < self.num_tiles.1 => Some((0, y+1)),
+                _ => None
+            };
+            cur_tile
+        }
+    }
+
+    let tile_size = image.tile_size;
+    let num_threads = thread::available_parallelism().map_or(2, |x| { x.get() });
+    let img = Arc::new(Mutex::new(image));
+
+    let (num_tiles, width, height) = {
+        let img = img.lock();
+        (((img.as_ref().unwrap().get_size().0 + tile_size - 1) / tile_size,
+        (img.as_ref().unwrap().get_size().1 + tile_size - 1) / tile_size),
+        img.as_ref().unwrap().get_size().0 as f32,
+        img.as_ref().unwrap().get_size().1 as f32)
+    };
+
+    //println!("Using {} threads to process {} tiles", num_threads, num_tiles.0 * num_tiles.1);
+
+    let ip = &camera.image_plane;
+    let top_left = view_transform * point![ip.left, ip.top, -camera.focal];
+    let image_x = view_transform * vector![ip.right - ip.left, 0.0, 0.0];
+    let image_y = view_transform * vector![0.0, ip.bottom - ip.top, 0.0];
+
+    let sched = Arc::new(TileScheduler::new(num_tiles));
+    thread::scope(|s| {
+        for i in 0..num_threads {
+            let img = Arc::clone(&img);
+            let sched = Arc::clone(&sched);
+            s.spawn(move ||{
+                let mut ray = Ray::new(view_transform * Point3::origin(), Default::default());
+                while let Some((tx, ty)) = sched.get_next() {
+                    let x0 = tx * tile_size;
+                    let y0 = ty * tile_size;
+                    for y in 0..tile_size {
+                        for x in 0..tile_size {
+                            let p = top_left + (((x0 + x) as f32) / width) * image_x + (((y0 + y) as f32) / height) * image_y;
+                            ray.dir = (p - ray.orig).normalize();
+                            ray.update_inverse_dir();
+                            let col = intersect_scene(&ray);
+
+                            img.lock().unwrap().put_pixel_from_tile(tx, ty, x, y, &col);
+                        }
+                    }
+                }
+            });
+        }
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -246,7 +198,7 @@ pub trait Intersectable : Sync
 
 impl Intersectable for Sphere {
     fn hit_query(&self, ray: &Ray) -> Option<f32> {
-        let oc = ray.orig - self.center;
+        let oc = ray.orig.coords - self.center;
         let a = ray.dir.dot(&ray.dir);
         let b = oc.dot(&ray.dir);
         let c = (oc.dot(&oc)) - self.radius * self.radius;
@@ -271,7 +223,7 @@ impl Intersectable for Sphere {
 
     fn surface_query(&self, ray: &Ray) -> Option<(f32, SurfaceData)> {
         self.hit_query(ray).and_then(|t| {
-            let normal = (ray.orig + t * ray.dir - self.center).normalize();
+            let normal = (ray.orig.coords + t * ray.dir - self.center).normalize();
             Some((t, SurfaceData{ normal, tex_coords: (0.0, 0.0), bary_coords: (0.0, 0.0) }))
         })
     }
@@ -311,7 +263,7 @@ impl Triangle {
         }
     
         let inv_det = 1.0 / det;
-        let t = ray.orig - self.v0;
+        let t = ray.orig.coords - self.v0;
         let u = inv_det * (t.dot(&p));
         if u < 0.0 || u > 1.0 {
             return None
